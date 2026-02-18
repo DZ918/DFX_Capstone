@@ -1,0 +1,22 @@
+Project Feature Update (Food/Drink Detection System)
+
+Implemented in this version:
+- JSON alert log with timestamps. Each alert records the local timestamp, frame size, and detections.
+- Coordinate output per detection: bounding box (x1, y1, x2, y2) and center point (x, y) in pixels.
+- Consecutive-frame persistence to reduce false positives (alerts only after N frames with detections).
+- Cooldown timer to prevent repeated alerts on the same item.
+- Tunable detection thresholds (confidence and IoU) for performance control.
+
+Notes on the JSON structure:
+- File: alerts.json (default; can be changed via --alert-log)
+- Each entry includes: timestamp, frame_size, detections[]
+- Each detection includes: class_id, class_name, confidence, bbox_xyxy, center_xy
+
+To be implemented (planned enhancements):
+- Precise zone mapping (ROIs) and zone names (e.g., “Bench A”).
+- Coordinate mapping to floor plan (camera calibration / homography).
+- Eating/drinking motion detection (temporal action recognition).
+- Dashboard for alert review, history, and metrics.
+- Automatic performance reporting (confusion matrix, precision/recall, false rates).
+- Evidence capture: short clips before/after an alert.
+- Jetson Nano evaluation: test multiple models to find the best accuracy/performance tradeoff on Jetson Nano hardware.

@@ -1,0 +1,170 @@
+[
+  {
+    "timestamp": "2026-02-12T22:08:37",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 53,
+        "class_name": "pizza",
+        "confidence": 0.486,
+        "bbox_xyxy": [
+          15.61,
+          654.19,
+          409.44,
+          947.15
+        ],
+        "center_xy": [
+          212.52,
+          800.67
+        ]
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-02-13T11:56:35",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.4995,
+        "bbox_xyxy": [
+          458.26,
+          732.28,
+          684.24,
+          1071.88
+        ],
+        "center_xy": [
+          571.25,
+          902.08
+        ]
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-02-13T11:56:53",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.8232,
+        "bbox_xyxy": [
+          571.53,
+          459.13,
+          739.3,
+          933.96
+        ],
+        "center_xy": [
+          655.42,
+          696.55
+        ]
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-02-13T13:21:02",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 53,
+        "class_name": "pizza",
+        "confidence": 0.618,
+        "bbox_xyxy": [
+          320.85,
+          708.43,
+          626.4,
+          961.17
+        ],
+        "center_xy": [
+          473.63,
+          834.8
+        ]
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-02-13T13:33:56",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.2721,
+        "bbox_xyxy": [
+          687.41,
+          425.18,
+          874.64,
+          629.41
+        ],
+        "center_xy": [
+          781.03,
+          527.3
+        ]
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-02-13T13:34:20",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 53,
+        "class_name": "pizza",
+        "confidence": 0.792,
+        "bbox_xyxy": [
+          1171.15,
+          748.01,
+          1463.9,
+          1074.22
+        ],
+        "center_xy": [
+          1317.53,
+          911.12
+        ]
+      }
+    ]
+  },
+  {
+    "timestamp": "2026-02-13T13:38:15",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 53,
+        "class_name": "pizza",
+        "confidence": 0.5633,
+        "bbox_xyxy": [
+          467.88,
+          28.74,
+          803.4,
+          332.16
+        ],
+        "center_xy": [
+          635.64,
+          180.45
+        ]
+      }
+    ]
+  }
+]
