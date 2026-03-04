@@ -4,6 +4,7 @@ import os
 import sys
 import time
 from datetime import datetime
+from uuid import uuid4
 
 import cv2
 
@@ -65,6 +66,39 @@ def append_alert(log_path: str | None, alert: dict) -> None:
         json.dump(alerts, handle, indent=2)
 
 
+def _safe_token(value: str) -> str:
+    token = "".join(ch if ch.isalnum() else "_" for ch in value.strip().lower())
+    token = token.strip("_")
+    return token or "item"
+
+
+def add_detection_snippets(
+    frame,
+    detections: list[dict],
+    snippet_dir: str | None,
+    alert_id: str,
+) -> list[dict]:
+    if not snippet_dir:
+        return detections
+    os.makedirs(snippet_dir, exist_ok=True)
+    height, width = frame.shape[:2]
+    for idx, det in enumerate(detections):
+        x1, y1, x2, y2 = det["bbox_xyxy"]
+        left = max(0, min(width - 1, int(x1)))
+        top = max(0, min(height - 1, int(y1)))
+        right = max(left + 1, min(width, int(x2)))
+        bottom = max(top + 1, min(height, int(y2)))
+        crop = frame[top:bottom, left:right]
+        if crop.size == 0:
+            continue
+        class_token = _safe_token(det.get("class_name", "item"))
+        snippet_file = f"{alert_id}_{idx}_{class_token}.jpg"
+        snippet_path = os.path.join(snippet_dir, snippet_file)
+        if cv2.imwrite(snippet_path, crop):
+            det["snippet_file"] = snippet_file
+    return detections
+
+
 def detections_from_result(result, allowed_names: set[str] | None = None) -> list[dict]:
     detections: list[dict] = []
     if result.boxes is None or len(result.boxes) == 0:
@@ -99,6 +133,7 @@ def run_webcam(
     cooldown: float,
     clear_frames: int,
     alert_log: str | None,
+    snippet_dir: str | None,
 ) -> None:
     cap = cv2.VideoCapture(cam_index)
     if not cap.isOpened():
@@ -157,10 +192,18 @@ def run_webcam(
                 and armed
                 and (now - last_alert_ts) >= max(0.0, cooldown)
             ):
+                alert_id = uuid4().hex[:12]
                 alert = {
+                    "id": alert_id,
+                    "status": "new",
                     "timestamp": datetime.now().isoformat(timespec="seconds"),
                     "frame_size": {"width": int(frame.shape[1]), "height": int(frame.shape[0])},
-                    "detections": detections,
+                    "detections": add_detection_snippets(
+                        frame,
+                        detections,
+                        snippet_dir=snippet_dir,
+                        alert_id=alert_id,
+                    ),
                 }
                 append_alert(alert_log, alert)
                 last_alert_ts = now
@@ -240,6 +283,11 @@ def main() -> int:
         default="alerts.json",
         help="Path to JSON alert log (set empty to disable)",
     )
+    parser.add_argument(
+        "--snippet-dir",
+        default="snippets",
+        help="Directory where per-detection crop images are stored (set empty to disable)",
+    )
     args = parser.parse_args()
 
     model = YOLO(args.model)
@@ -257,6 +305,7 @@ def main() -> int:
             cooldown=args.cooldown,
             clear_frames=args.clear_frames,
             alert_log=alert_log,
+            snippet_dir=args.snippet_dir or None,
         )
     return 0
 

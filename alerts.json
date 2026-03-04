@@ -21,7 +21,9 @@
           800.67
         ]
       }
-    ]
+    ],
+    "id": "be3c8b236578",
+    "status": "new"
   },
   {
     "timestamp": "2026-02-13T11:56:35",
@@ -45,7 +47,9 @@
           902.08
         ]
       }
-    ]
+    ],
+    "id": "64398fd64206",
+    "status": "new"
   },
   {
     "timestamp": "2026-02-13T11:56:53",
@@ -69,7 +73,9 @@
           696.55
         ]
       }
-    ]
+    ],
+    "id": "dcaa537d6dbb",
+    "status": "new"
   },
   {
     "timestamp": "2026-02-13T13:21:02",
@@ -93,7 +99,9 @@
           834.8
         ]
       }
-    ]
+    ],
+    "id": "10bbd05bb257",
+    "status": "new"
   },
   {
     "timestamp": "2026-02-13T13:33:56",
@@ -117,7 +125,9 @@
           527.3
         ]
       }
-    ]
+    ],
+    "id": "6d52e06d3de6",
+    "status": "new"
   },
   {
     "timestamp": "2026-02-13T13:34:20",
@@ -141,7 +151,9 @@
           911.12
         ]
       }
-    ]
+    ],
+    "id": "57c39ee4065a",
+    "status": "new"
   },
   {
     "timestamp": "2026-02-13T13:38:15",
@@ -164,6 +176,224 @@
           635.64,
           180.45
         ]
+      }
+    ],
+    "id": "666784b8dfaf",
+    "status": "new"
+  },
+  {
+    "timestamp": "2026-02-18T18:00:40",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 41,
+        "class_name": "cup",
+        "confidence": 0.4806,
+        "bbox_xyxy": [
+          148.66,
+          633.29,
+          293.98,
+          953.87
+        ],
+        "center_xy": [
+          221.32,
+          793.58
+        ]
+      }
+    ],
+    "id": "c4daa5db8eb3",
+    "status": "new"
+  },
+  {
+    "timestamp": "2026-02-18T18:00:54",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 41,
+        "class_name": "cup",
+        "confidence": 0.4613,
+        "bbox_xyxy": [
+          569.12,
+          651.18,
+          745.99,
+          1066.84
+        ],
+        "center_xy": [
+          657.55,
+          859.01
+        ]
+      }
+    ],
+    "id": "c6997ac14f2d",
+    "status": "new"
+  },
+  {
+    "id": "ece607425e93",
+    "status": "acknowledged",
+    "timestamp": "2026-02-19T19:25:46",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.3338,
+        "bbox_xyxy": [
+          339.62,
+          400.53,
+          377.65,
+          495.57
+        ],
+        "center_xy": [
+          358.63,
+          448.05
+        ],
+        "snippet_file": "ece607425e93_0_bottle.jpg"
+      }
+    ],
+    "updated_at": "2026-02-19T19:32:59"
+  },
+  {
+    "id": "33921f70467c",
+    "status": "acknowledged",
+    "timestamp": "2026-02-19T19:25:57",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 53,
+        "class_name": "pizza",
+        "confidence": 0.6666,
+        "bbox_xyxy": [
+          581.99,
+          521.89,
+          916.16,
+          809.71
+        ],
+        "center_xy": [
+          749.08,
+          665.8
+        ],
+        "snippet_file": "33921f70467c_0_pizza.jpg"
+      }
+    ],
+    "updated_at": "2026-02-19T19:32:57"
+  },
+  {
+    "id": "d7d0722f5187",
+    "status": "new",
+    "timestamp": "2026-02-19T19:39:04",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.4216,
+        "bbox_xyxy": [
+          1480.8,
+          583.32,
+          1603.43,
+          887.58
+        ],
+        "center_xy": [
+          1542.12,
+          735.45
+        ],
+        "snippet_file": "d7d0722f5187_0_bottle.jpg"
+      }
+    ]
+  },
+  {
+    "id": "9550670d6da2",
+    "status": "new",
+    "timestamp": "2026-02-19T19:39:20",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.8583,
+        "bbox_xyxy": [
+          152.61,
+          110.59,
+          768.45,
+          1069.41
+        ],
+        "center_xy": [
+          460.53,
+          590.0
+        ],
+        "snippet_file": "9550670d6da2_0_bottle.jpg"
+      }
+    ]
+  },
+  {
+    "id": "db0765bf05ea",
+    "status": "new",
+    "timestamp": "2026-02-19T19:52:21",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.4785,
+        "bbox_xyxy": [
+          819.16,
+          468.57,
+          1025.22,
+          1079.73
+        ],
+        "center_xy": [
+          922.19,
+          774.15
+        ],
+        "snippet_file": "db0765bf05ea_0_bottle.jpg"
+      }
+    ]
+  },
+  {
+    "id": "7917b69d4fed",
+    "status": "new",
+    "timestamp": "2026-02-19T19:55:13",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.9291,
+        "bbox_xyxy": [
+          428.39,
+          328.23,
+          851.69,
+          1070.68
+        ],
+        "center_xy": [
+          640.04,
+          699.45
+        ],
+        "snippet_file": "7917b69d4fed_0_bottle.jpg"
       }
     ]
   }
