@@ -937,5 +937,107 @@
         "snippet_file": "e812b796cff9_0_donut.jpg"
       }
     ]
+  },
+  {
+    "id": "f838c510ed91",
+    "status": "new",
+    "timestamp": "2026-03-25T15:22:36",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 3.278,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.8737,
+        "bbox_xyxy": [
+          289.46,
+          627.6,
+          543.66,
+          852.26
+        ],
+        "center_xy": [
+          416.56,
+          739.93
+        ],
+        "motion_track_id": 1,
+        "motion_score": 3.278,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "f838c510ed91_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "0a91481e0441",
+    "status": "new",
+    "timestamp": "2026-03-25T15:25:22",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.876,
+        "bbox_xyxy": [
+          310.52,
+          355.66,
+          623.54,
+          1066.26
+        ],
+        "center_xy": [
+          467.03,
+          710.96
+        ],
+        "motion_track_id": 1,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "0a91481e0441_0_bottle.jpg"
+      }
+    ]
+  },
+  {
+    "id": "fcaacbbbb98c",
+    "status": "new",
+    "timestamp": "2026-03-25T15:25:37",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 1920,
+      "height": 1080
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.64,
+        "bbox_xyxy": [
+          322.08,
+          833.63,
+          502.21,
+          989.47
+        ],
+        "center_xy": [
+          412.15,
+          911.55
+        ],
+        "motion_track_id": 4,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "fcaacbbbb98c_0_donut.jpg"
+      }
+    ]
   }
 ]

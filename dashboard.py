@@ -5,8 +5,10 @@ from collections import deque
 import json
 import math
 import os
+import platform
 import random
 import shutil
+import subprocess
 import threading
 import time
 from datetime import datetime, timedelta
@@ -86,6 +88,26 @@ HTML_PAGE = """<!doctype html>
       .hidden { display: none !important; }
       .feed { width: 100%; border-radius: 8px; background: #000; }
       h2 { margin: 8px 0 12px; font-size: 16px; }
+      .alerts-card { display: flex; flex-direction: column; }
+      .alerts-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .alerts-toolbar label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: #374151;
+      }
+      .alerts-scroll {
+        height: min(68vh, 760px);
+        overflow-y: auto;
+        padding-right: 4px;
+      }
       .alerts-list { display: grid; gap: 10px; }
       .alert { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: #fff; }
       .alert-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
@@ -126,6 +148,18 @@ HTML_PAGE = """<!doctype html>
         font-weight: 600;
       }
       .fold-section[open] summary { margin-bottom: 10px; }
+      .zone-group {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .zone-group-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: #374151;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
       .empty-note {
         font-size: 12px;
         color: #6b7280;
@@ -217,6 +251,7 @@ HTML_PAGE = """<!doctype html>
       }
       @media (max-width: 600px) {
         .settings-row { grid-template-columns: 1fr; }
+        .alerts-scroll { height: 58vh; }
       }
       @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
     </style>
@@ -307,17 +342,25 @@ HTML_PAGE = """<!doctype html>
         <h2>Live Camera Feed</h2>
         <img class=\"feed\" src=\"/stream\" alt=\"Live camera feed\" />
       </section>
-      <section class=\"card\">
+      <section class=\"card alerts-card\">
         <h2>Recent Alerts</h2>
-        <div id=\"alertsPanel\">
-          <details id=\"acceptedSection\" class=\"fold-section\" style=\"display:none;\">
-            <summary>Accepted (<span id=\"acceptedCount\">0</span>)</summary>
-            <div id=\"acceptedAlerts\" class=\"alerts-list\"></div>
-          </details>
-          <details id=\"newSection\" class=\"fold-section\" open>
-            <summary>New / Active (<span id=\"newCount\">0</span>)</summary>
-            <div id=\"activeAlerts\" class=\"alerts-list\"></div>
-          </details>
+        <div class=\"alerts-toolbar\">
+          <label>
+            <input id=\"groupAlertsByZone\" type=\"checkbox\" />
+            Group by zone
+          </label>
+        </div>
+        <div class=\"alerts-scroll\">
+          <div id=\"alertsPanel\">
+            <details id=\"acceptedSection\" class=\"fold-section\" style=\"display:none;\">
+              <summary>Accepted (<span id=\"acceptedCount\">0</span>)</summary>
+              <div id=\"acceptedAlerts\" class=\"alerts-list\"></div>
+            </details>
+            <details id=\"newSection\" class=\"fold-section\" open>
+              <summary>New / Active (<span id=\"newCount\">0</span>)</summary>
+              <div id=\"activeAlerts\" class=\"alerts-list\"></div>
+            </details>
+          </div>
         </div>
         <div id=\"error\" class=\"error\"></div>
       </section>
@@ -636,6 +679,7 @@ HTML_PAGE = """<!doctype html>
 
       let lastAlertsFingerprint = '';
       let refreshInFlight = false;
+      let cachedOrderedAlerts = [];
 
       // Alert cards are rebuilt from API data on every meaningful refresh.
       function renderAlertCard(alert, errorEl) {
@@ -678,6 +722,70 @@ HTML_PAGE = """<!doctype html>
         return item;
       }
 
+      function groupAlertsByZone(alerts) {
+        const groups = new Map();
+        alerts.forEach((alert) => {
+          const detections = Array.isArray(alert.detections) ? alert.detections : [];
+          const zone = alert.zone || (detections[0] && detections[0].zone) || 'Unassigned';
+          if (!groups.has(zone)) {
+            groups.set(zone, []);
+          }
+          groups.get(zone).push(alert);
+        });
+        return groups;
+      }
+
+      function renderAlertsInto(container, alerts, errorEl, emptyMessage) {
+        container.innerHTML = '';
+        if (alerts.length === 0) {
+          container.innerHTML = `<div class=\"empty-note\">${escapeHtml(emptyMessage)}</div>`;
+          return;
+        }
+        const groupByZone = document.getElementById('groupAlertsByZone').checked;
+        if (!groupByZone) {
+          alerts.forEach((alert) => {
+            container.appendChild(renderAlertCard(alert, errorEl));
+          });
+          return;
+        }
+        groupAlertsByZone(alerts).forEach((groupAlerts, zone) => {
+          const group = document.createElement('section');
+          group.className = 'zone-group';
+          const title = document.createElement('div');
+          title.className = 'zone-group-title';
+          title.textContent = `${zone} (${groupAlerts.length})`;
+          const list = document.createElement('div');
+          list.className = 'alerts-list';
+          groupAlerts.forEach((alert) => {
+            list.appendChild(renderAlertCard(alert, errorEl));
+          });
+          group.appendChild(title);
+          group.appendChild(list);
+          container.appendChild(group);
+        });
+      }
+
+      function renderAlerts(orderedAlerts, errorEl) {
+        const activeList = document.getElementById('activeAlerts');
+        const acceptedList = document.getElementById('acceptedAlerts');
+        const acceptedCount = document.getElementById('acceptedCount');
+        const newCount = document.getElementById('newCount');
+        const acceptedSection = document.getElementById('acceptedSection');
+        const activeAlerts = orderedAlerts.filter((alert) => (alert.status || 'new') !== 'accepted');
+        const acceptedAlerts = orderedAlerts.filter((alert) => (alert.status || 'new') === 'accepted');
+
+        renderAlertsInto(activeList, activeAlerts, errorEl, 'No active alerts right now.');
+        renderAlertsInto(acceptedList, acceptedAlerts, errorEl, 'No accepted alerts right now.');
+        newCount.textContent = String(activeAlerts.length);
+        acceptedCount.textContent = String(acceptedAlerts.length);
+        if (acceptedAlerts.length === 0) {
+          acceptedSection.open = false;
+          acceptedSection.style.display = 'none';
+        } else {
+          acceptedSection.style.display = '';
+        }
+      }
+
       async function refreshAlerts() {
         if (refreshInFlight) {
           return;
@@ -689,44 +797,22 @@ HTML_PAGE = """<!doctype html>
           const res = await fetch('/alerts?limit=20');
           const data = await res.json();
           const ordered = data.slice().reverse();
+          cachedOrderedAlerts = ordered;
           const nextFingerprint = fingerprintAlerts(ordered);
           if (nextFingerprint === lastAlertsFingerprint) {
             return;
           }
           lastAlertsFingerprint = nextFingerprint;
-          const activeList = document.getElementById('activeAlerts');
-          const acceptedList = document.getElementById('acceptedAlerts');
-          const acceptedCount = document.getElementById('acceptedCount');
-          const newCount = document.getElementById('newCount');
-          const acceptedSection = document.getElementById('acceptedSection');
-          activeList.innerHTML = '';
-          acceptedList.innerHTML = '';
-          const activeAlerts = ordered.filter((alert) => (alert.status || 'new') !== 'accepted');
-          const acceptedAlerts = ordered.filter((alert) => (alert.status || 'new') === 'accepted');
-          if (activeAlerts.length === 0) {
-            activeList.innerHTML = '<div class=\"empty-note\">No active alerts right now.</div>';
-          } else {
-            activeAlerts.forEach((alert) => {
-              activeList.appendChild(renderAlertCard(alert, errorEl));
-            });
-          }
-          newCount.textContent = String(activeAlerts.length);
-          acceptedAlerts.forEach((alert) => {
-            acceptedList.appendChild(renderAlertCard(alert, errorEl));
-          });
-          acceptedCount.textContent = String(acceptedAlerts.length);
-          if (acceptedAlerts.length === 0) {
-            acceptedSection.open = false;
-            acceptedSection.style.display = 'none';
-          } else {
-            acceptedSection.style.display = '';
-          }
+          renderAlerts(ordered, errorEl);
         } catch (err) {
           errorEl.textContent = 'Could not load alerts right now.';
         } finally {
           refreshInFlight = false;
         }
       }
+      document.getElementById('groupAlertsByZone').addEventListener('change', () => {
+        renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
+      });
       setupLightbox();
       setupSettingsPanel();
       setupSettingsForm();
@@ -790,64 +876,161 @@ def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
     return sorted(allowed)
 
 
+def _extract_detection_geometry(det: dict) -> tuple[float, float, float] | None:
+    """Return center and diagonal size for a detection, or None when incomplete."""
+    center = det.get("center_xy")
+    bbox = det.get("bbox_xyxy")
+    if not isinstance(center, (list, tuple)) or len(center) != 2:
+        return None
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None
+    try:
+        x = float(center[0])
+        y = float(center[1])
+        x1, y1, x2, y2 = (float(value) for value in bbox)
+    except (TypeError, ValueError):
+        return None
+    box_diag = math.hypot(max(1.0, x2 - x1), max(1.0, y2 - y1))
+    return x, y, box_diag
+
+
+def _score_motion_track(track: dict, frame_diag: float, frame_height: int, config) -> float:
+    """Score a matched object track based on recent path, lift, and consistency."""
+    history = list(track.get("history", ()))
+    if len(history) < 6:
+        return 0.0
+    path_length = 0.0
+    upward_total = 0.0
+    downward_total = 0.0
+    min_y = history[0][1]
+    for prev, cur in zip(history, history[1:]):
+        path_length += math.hypot(cur[0] - prev[0], cur[1] - prev[1])
+        delta_y = prev[1] - cur[1]
+        upward_total += max(0.0, delta_y)
+        downward_total += max(0.0, -delta_y)
+        min_y = min(min_y, cur[1])
+    first_x, first_y, _, _ = history[0]
+    last_x, last_y, _, _ = history[-1]
+    net_displacement = math.hypot(last_x - first_x, last_y - first_y)
+    net_upward = max(0.0, first_y - last_y)
+    horizontal_travel = abs(last_x - first_x)
+    path_norm = path_length / max(1.0, frame_diag)
+    displacement_norm = net_displacement / max(1.0, frame_diag)
+    upward_norm = upward_total / max(1.0, float(frame_height))
+    downward_norm = downward_total / max(1.0, float(frame_height))
+    net_upward_norm = net_upward / max(1.0, float(frame_height))
+    vertical_gain_norm = max(0.0, first_y - min_y) / max(1.0, float(frame_height))
+    linearity = net_displacement / max(1.0, path_length)
+    vertical_dominance = net_upward / max(1.0, horizontal_travel + net_upward)
+
+    # Hard gate: stationary objects often jitter a bit, but true eating/drinking motion
+    # should show net upward travel plus meaningful displacement over the whole window.
+    if displacement_norm < (config.motion_displacement_threshold * 0.65):
+        track.get("score_history", deque()).clear()
+        return 0.0
+    if net_upward_norm < (config.motion_upward_threshold * 0.75):
+        track.get("score_history", deque()).clear()
+        return 0.0
+    if vertical_gain_norm < (config.motion_upward_threshold * 1.0):
+        track.get("score_history", deque()).clear()
+        return 0.0
+    if linearity < 0.45:
+        track.get("score_history", deque()).clear()
+        return 0.0
+    if vertical_dominance < 0.35:
+        track.get("score_history", deque()).clear()
+        return 0.0
+
+    displacement_score = displacement_norm / max(1e-6, config.motion_displacement_threshold)
+    path_score = path_norm / max(1e-6, config.motion_displacement_threshold * 2.0)
+    upward_score = upward_norm / max(1e-6, config.motion_upward_threshold)
+    net_upward_score = net_upward_norm / max(1e-6, config.motion_upward_threshold)
+    lift_score = vertical_gain_norm / max(1e-6, config.motion_upward_threshold * 1.25)
+    downward_penalty = downward_norm / max(1e-6, config.motion_upward_threshold)
+
+    raw_score = (
+        0.25 * displacement_score
+        + 0.10 * path_score
+        + 0.20 * upward_score
+        + 0.25 * net_upward_score
+        + 0.10 * lift_score
+        + 0.10 * linearity
+        - 0.20 * downward_penalty
+    )
+    score_history = track.setdefault("score_history", deque(maxlen=max(3, config.motion_window // 3)))
+    score_history.append(max(0.0, raw_score))
+    return sum(score_history) / len(score_history)
+
+
 def detect_consumption_motion(config, detections: list[dict], frame_width: int, frame_height: int) -> tuple[bool, float]:
     """Heuristically score whether a detected item is moving like it is being consumed."""
     if not config.motion_enabled:
         return False, 0.0
+
     now = time.time()
-    class_centers: dict[str, list[tuple[float, float]]] = {}
-    for det in detections:
+    frame_diag = max(1.0, math.hypot(frame_width, frame_height))
+    stale_after = max(2.0, config.motion_window / max(1.0, config.stream_fps))
+
+    for track_id, track in list(config.motion_tracks.items()):
+        if (now - float(track.get("last_seen", 0.0))) > stale_after:
+            config.motion_tracks.pop(track_id, None)
+
+    candidates: list[tuple[int, dict, str, float, float, float]] = []
+    for det_index, det in enumerate(detections):
         class_name = str(det.get("class_name", "")).strip().lower()
         if class_name not in CONSUMPTION_CLASS_NAMES:
             continue
-        center = det.get("center_xy")
-        if not isinstance(center, (list, tuple)) or len(center) != 2:
+        geometry = _extract_detection_geometry(det)
+        if geometry is None:
             continue
-        try:
-            x = float(center[0])
-            y = float(center[1])
-        except (TypeError, ValueError):
-            continue
-        class_centers.setdefault(class_name, []).append((x, y))
+        x, y, box_diag = geometry
+        candidates.append((det_index, det, class_name, x, y, box_diag))
 
-    # Drop old center points so motion is based only on a recent rolling window.
-    stale_after = max(2.0, config.motion_window / max(1.0, config.stream_fps))
-    for class_name, history in list(config.motion_history.items()):
-        fresh = [entry for entry in history if (now - entry[2]) <= stale_after]
-        if fresh:
-            config.motion_history[class_name] = deque(fresh, maxlen=config.motion_window)
-        else:
-            config.motion_history.pop(class_name, None)
-
-    for class_name, centers in class_centers.items():
-        # Multiple detections of the same class in one frame are collapsed to one average center.
-        avg_x = sum(c[0] for c in centers) / len(centers)
-        avg_y = sum(c[1] for c in centers) / len(centers)
-        history = config.motion_history.get(class_name)
-        if history is None:
-            history = deque(maxlen=config.motion_window)
-            config.motion_history[class_name] = history
-        history.append((avg_x, avg_y, now))
-
-    frame_diag = max(1.0, math.hypot(frame_width, frame_height))
-    class_scores: dict[str, float] = {}
-    for class_name, history in config.motion_history.items():
-        if class_name not in class_centers or len(history) < 4:
-            continue
-        first_x, first_y, _ = history[0]
-        last_x, last_y, _ = history[-1]
-        displacement_norm = math.hypot(last_x - first_x, last_y - first_y) / frame_diag
-        upward_norm = max(0.0, (first_y - last_y) / max(1.0, float(frame_height)))
-        displacement_score = displacement_norm / max(1e-6, config.motion_displacement_threshold)
-        upward_score = upward_norm / max(1e-6, config.motion_upward_threshold)
-        # The score mixes overall movement with upward travel, which tends to match the
-        # "object being lifted toward a person" pattern better than displacement alone.
-        class_scores[class_name] = 0.6 * displacement_score + 0.4 * upward_score
+    used_track_ids: set[int] = set()
+    matched_track_ids: dict[int, int] = {}
+    for det_index, det, class_name, x, y, box_diag in sorted(
+        candidates,
+        key=lambda item: float(item[1].get("confidence", 0.0)),
+        reverse=True,
+    ):
+        best_track_id = None
+        best_distance = float("inf")
+        max_match_distance = max(frame_diag * 0.05, box_diag * 1.6, 60.0)
+        for track_id, track in config.motion_tracks.items():
+            if track_id in used_track_ids:
+                continue
+            if track.get("class_name") != class_name:
+                continue
+            last_x, last_y, _, _ = track["history"][-1]
+            distance = math.hypot(x - last_x, y - last_y)
+            if distance <= max_match_distance and distance < best_distance:
+                best_distance = distance
+                best_track_id = track_id
+        if best_track_id is None:
+            best_track_id = config.next_motion_track_id
+            config.next_motion_track_id += 1
+            config.motion_tracks[best_track_id] = {
+                "class_name": class_name,
+                "history": deque(maxlen=config.motion_window),
+                "last_seen": now,
+                "score_history": deque(maxlen=max(3, config.motion_window // 3)),
+            }
+        track = config.motion_tracks[best_track_id]
+        track["last_seen"] = now
+        track["history"].append((x, y, box_diag, now))
+        used_track_ids.add(best_track_id)
+        matched_track_ids[det_index] = best_track_id
 
     max_score = 0.0
-    for det in detections:
-        class_name = str(det.get("class_name", "")).strip().lower()
-        score = class_scores.get(class_name, 0.0)
+    for det_index, det in enumerate(detections):
+        track_id = matched_track_ids.get(det_index)
+        if track_id is None:
+            det["motion_score"] = 0.0
+            det["consumption_motion"] = False
+            continue
+        track = config.motion_tracks.get(track_id)
+        score = 0.0 if track is None else _score_motion_track(track, frame_diag, frame_height, config)
+        det["motion_track_id"] = track_id
         det["motion_score"] = round(score, 3)
         det["consumption_motion"] = bool(score >= 1.0)
         if score > max_score:
@@ -1288,13 +1471,52 @@ def make_random_alerts(limit: int, frame_width: int, frame_height: int) -> list[
     return alerts
 
 
+def _camera_backend_flag() -> int:
+    """Prefer AVFoundation on macOS so camera probing stays on the native backend."""
+    if cv2 is None:
+        return 0
+    if platform.system() == "Darwin" and hasattr(cv2, "CAP_AVFOUNDATION"):
+        return int(cv2.CAP_AVFOUNDATION)
+    return int(getattr(cv2, "CAP_ANY", 0))
+
+
+def _open_camera_capture(index: int):
+    """Open one camera index using the best backend for the current platform."""
+    if cv2 is None:
+        return None
+    backend = _camera_backend_flag()
+    return cv2.VideoCapture(index, backend) if backend else cv2.VideoCapture(index)
+
+
+def _suggest_camera_probe_count(default_count: int) -> int:
+    """Use the host OS to avoid probing obviously invalid camera indices."""
+    if platform.system() != "Darwin":
+        return max(1, default_count)
+    try:
+        output = subprocess.check_output(
+            ["system_profiler", "SPCameraDataType", "-json"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        )
+        payload = json.loads(output)
+        cameras = payload.get("SPCameraDataType", [])
+        if isinstance(cameras, list) and cameras:
+            return max(1, min(default_count, len(cameras)))
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
+        pass
+    return max(1, default_count)
+
+
 def list_camera_devices(max_devices: int = 8) -> list[dict]:
     """Probe a small range of camera indices for use in the dashboard dropdown."""
     devices: list[dict] = []
     if cv2 is None:
         return devices
-    for index in range(max(1, max_devices)):
-        cap = cv2.VideoCapture(index)
+    probe_count = _suggest_camera_probe_count(max_devices)
+    for index in range(probe_count):
+        cap = _open_camera_capture(index)
+        if cap is None:
+            continue
         available = bool(cap.isOpened())
         if available:
             cap.release()
@@ -1522,7 +1744,8 @@ class DashboardConfig:
         self.motion_window = max(4, int(motion_window))
         self.motion_displacement_threshold = float(motion_displacement_threshold)
         self.motion_upward_threshold = float(motion_upward_threshold)
-        self.motion_history: dict[str, deque] = {}
+        self.motion_tracks: dict[int, dict] = {}
+        self.next_motion_track_id = 1
         self.training_thread = None
         self.training_running = False
         self.training_last_started_at = ""
@@ -1842,7 +2065,8 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.consecutive = 0
                 config.clear_count = 0
                 config.armed = True
-                config.motion_history.clear()
+                config.motion_tracks.clear()
+                config.next_motion_track_id = 1
                 paused = make_status_frame(out_width or 640, out_height or 360, "Camera is OFF")
                 if paused is not None:
                     with config.frame_lock:
@@ -1856,7 +2080,9 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 active_cam_index = camera_index
 
             if cap is None:
-                cap = cv2.VideoCapture(camera_index)
+                cap = _open_camera_capture(camera_index)
+                if cap is None:
+                    raise RuntimeError("OpenCV camera backend is not available.")
                 if not cap.isOpened():
                     cap.release()
                     cap = None
@@ -1911,7 +2137,8 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     frame_height=int(frame.shape[0]),
                 )
             else:
-                config.motion_history.clear()
+                config.motion_tracks.clear()
+                config.next_motion_track_id = 1
 
             # This debounce logic makes "item stays in view" produce one alert rather than many.
             if detection_enabled and detections:
