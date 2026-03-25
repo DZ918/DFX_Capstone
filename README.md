@@ -1,5 +1,12 @@
 # DFX_Capstone
 
+python3 dashboard.py \
+  --inference-imgsz 320 \
+  --max-inference-fps 4 \
+  --fps 6 \
+  --jpeg-quality 65 \
+  --no-motion-enabled
+
 ## Fresh-device setup
 
 Run this once on a new machine:

@@ -308,6 +308,23 @@ HTML_PAGE = """<!doctype html>
             </label>
           </div>
           <div class=\"settings-row\">
+            <label class=\"settings-field\">Inference image size
+              <input id=\"setInferenceImgsz\" type=\"number\" min=\"160\" max=\"1280\" step=\"32\" />
+            </label>
+            <label class=\"settings-field\">Max inference FPS (0=unlimited)
+              <input id=\"setMaxInferenceFps\" type=\"number\" min=\"0\" max=\"60\" step=\"0.5\" />
+            </label>
+          </div>
+          <div class=\"settings-row\">
+            <label class=\"settings-field\">JPEG quality
+              <input id=\"setJpegQuality\" type=\"number\" min=\"40\" max=\"95\" step=\"1\" />
+            </label>
+            <label class=\"settings-toggle\">
+              <input id=\"setMotionEnabled\" type=\"checkbox\" />
+              Motion detection
+            </label>
+          </div>
+          <div class=\"settings-row\">
             <label class=\"settings-field\">Webcam device
               <select id=\"setCameraIndex\"></select>
             </label>
@@ -525,6 +542,10 @@ HTML_PAGE = """<!doctype html>
         document.getElementById('setStreamFps').value = Number(settings.stream_fps || 10).toFixed(0);
         document.getElementById('setWidth').value = Number(settings.width || 0).toFixed(0);
         document.getElementById('setHeight').value = Number(settings.height || 0).toFixed(0);
+        document.getElementById('setInferenceImgsz').value = Number(settings.inference_imgsz || 640).toFixed(0);
+        document.getElementById('setMaxInferenceFps').value = Number(settings.max_inference_fps || 0).toFixed(1);
+        document.getElementById('setJpegQuality').value = Number(settings.jpeg_quality || 75).toFixed(0);
+        document.getElementById('setMotionEnabled').checked = Boolean(settings.motion_enabled);
         document.getElementById('setCameraIndex').value = String(Number(settings.camera_index || 0));
         document.getElementById('setCameraZone').value = settings.camera_zone || 'Zone A';
       }
@@ -550,6 +571,10 @@ HTML_PAGE = """<!doctype html>
           stream_fps: readNumberField('setStreamFps', 'stream FPS'),
           width: Math.round(readNumberField('setWidth', 'display width')),
           height: Math.round(readNumberField('setHeight', 'display height')),
+          inference_imgsz: Math.round(readNumberField('setInferenceImgsz', 'inference image size')),
+          max_inference_fps: readNumberField('setMaxInferenceFps', 'max inference FPS'),
+          jpeg_quality: Math.round(readNumberField('setJpegQuality', 'JPEG quality')),
+          motion_enabled: document.getElementById('setMotionEnabled').checked,
           camera_index: Math.round(readNumberField('setCameraIndex', 'webcam device')),
           camera_zone: document.getElementById('setCameraZone').value,
         };
@@ -1485,7 +1510,10 @@ def _open_camera_capture(index: int):
     if cv2 is None:
         return None
     backend = _camera_backend_flag()
-    return cv2.VideoCapture(index, backend) if backend else cv2.VideoCapture(index)
+    capture = cv2.VideoCapture(index, backend) if backend else cv2.VideoCapture(index)
+    if capture is not None and hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+        capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+    return capture
 
 
 def _suggest_camera_probe_count(default_count: int) -> int:
@@ -1598,6 +1626,7 @@ def settings_snapshot(config) -> dict:
         return {
             "camera_enabled": bool(config.camera_enabled),
             "detection_enabled": bool(config.detection_enabled),
+            "motion_enabled": bool(config.motion_enabled),
             "conf": float(config.conf),
             "iou": float(config.iou),
             "persist_frames": int(config.persist_frames),
@@ -1606,6 +1635,9 @@ def settings_snapshot(config) -> dict:
             "stream_fps": float(config.stream_fps),
             "width": int(config.width),
             "height": int(config.height),
+            "inference_imgsz": int(config.inference_imgsz),
+            "max_inference_fps": float(config.max_inference_fps),
+            "jpeg_quality": int(config.jpeg_quality),
             "camera_index": int(config.camera_index),
             "camera_zone": str(config.camera_zone),
             "updated_at": config.settings_updated_at,
@@ -1630,6 +1662,8 @@ def update_runtime_settings(config, payload: dict) -> dict:
             config.camera_enabled = parse_bool(payload["camera_enabled"], "camera_enabled")
         if "detection_enabled" in payload:
             config.detection_enabled = parse_bool(payload["detection_enabled"], "detection_enabled")
+        if "motion_enabled" in payload:
+            config.motion_enabled = parse_bool(payload["motion_enabled"], "motion_enabled")
         if "conf" in payload:
             config.conf = clamp_float(payload["conf"], "conf", 0.01, 1.0)
         if "iou" in payload:
@@ -1646,6 +1680,14 @@ def update_runtime_settings(config, payload: dict) -> dict:
             config.width = clamp_int(payload["width"], "width", 0, 3840)
         if "height" in payload:
             config.height = clamp_int(payload["height"], "height", 0, 2160)
+        if "inference_imgsz" in payload:
+            config.inference_imgsz = clamp_int(payload["inference_imgsz"], "inference_imgsz", 160, 1280)
+        if "max_inference_fps" in payload:
+            config.max_inference_fps = clamp_float(
+                payload["max_inference_fps"], "max_inference_fps", 0.0, 60.0
+            )
+        if "jpeg_quality" in payload:
+            config.jpeg_quality = clamp_int(payload["jpeg_quality"], "jpeg_quality", 40, 95)
         if "camera_index" in payload:
             config.camera_index = clamp_int(payload["camera_index"], "camera_index", 0, 32)
         if "camera_zone" in payload:
@@ -1679,6 +1721,9 @@ class DashboardConfig:
         clear_frames,
         camera_zone,
         snippet_dir,
+        inference_imgsz,
+        max_inference_fps,
+        jpeg_quality,
         training_dir,
         train_epochs,
         train_imgsz,
@@ -1706,6 +1751,7 @@ class DashboardConfig:
         self.settings_updated_at = datetime.now().isoformat(timespec="seconds")
         self.snippet_dir = snippet_dir
         self.latest_frame = None
+        self.latest_jpeg = None
         self.frame_lock = threading.Lock()
         self.alert_lock = threading.Lock()
         self.settings_lock = threading.Lock()
@@ -1722,8 +1768,12 @@ class DashboardConfig:
             "stream_fps": float(stream_fps),
             "width": int(width),
             "height": int(height),
+            "inference_imgsz": int(inference_imgsz),
+            "max_inference_fps": float(max_inference_fps),
+            "jpeg_quality": int(jpeg_quality),
             "camera_index": int(camera_index),
             "camera_zone": self.camera_zone,
+            "motion_enabled": bool(motion_enabled),
         }
         self.stop = False
         self.consecutive = 0
@@ -1740,6 +1790,9 @@ class DashboardConfig:
         self.training_runs_dir = os.path.join(self.training_dir, "runs")
         self.train_epochs = int(train_epochs)
         self.train_imgsz = int(train_imgsz)
+        self.inference_imgsz = int(inference_imgsz)
+        self.max_inference_fps = float(max_inference_fps)
+        self.jpeg_quality = int(jpeg_quality)
         self.motion_enabled = bool(motion_enabled)
         self.motion_window = max(4, int(motion_window))
         self.motion_displacement_threshold = float(motion_displacement_threshold)
@@ -2009,17 +2062,13 @@ class DashboardHandler(BaseHTTPRequestHandler):
         try:
             while True:
                 with config.frame_lock:
-                    frame = None if config.latest_frame is None else config.latest_frame.copy()
-                if frame is None:
+                    payload = None if config.latest_jpeg is None else bytes(config.latest_jpeg)
+                if payload is None:
                     time.sleep(0.05)
-                    continue
-                ok, encoded = cv2.imencode(".jpg", frame)
-                if not ok:
                     continue
                 with config.settings_lock:
                     stream_fps = float(config.stream_fps)
                 delay = 1.0 / max(1.0, stream_fps)
-                payload = encoded.tobytes()
                 self.wfile.write(b"--frame\r\n")
                 self.wfile.write(b"Content-Type: image/jpeg\r\n")
                 self.wfile.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("utf-8"))
@@ -2039,20 +2088,31 @@ def camera_worker(config: DashboardConfig, cam_index: int):
         raise RuntimeError("OpenCV is required for live camera mode.")
     cap = None
     active_cam_index = int(cam_index)
+    last_detections = []
+    last_motion_detected = False
+    last_motion_score = 0.0
+    next_inference_at = 0.0
+    allowed_ids = None
 
     try:
         while not config.stop:
+            loop_started_at = time.perf_counter()
             # Snapshot the tunable settings once per loop so the frame is processed consistently.
             with config.settings_lock:
                 camera_enabled = bool(config.camera_enabled)
                 detection_enabled = bool(config.detection_enabled)
+                motion_enabled = bool(config.motion_enabled)
                 conf = float(config.conf)
                 iou = float(config.iou)
                 persist_frames = int(config.persist_frames)
                 cooldown = float(config.cooldown)
                 clear_frames = int(config.clear_frames)
+                stream_fps = float(config.stream_fps)
                 out_width = int(config.width)
                 out_height = int(config.height)
+                inference_imgsz = int(config.inference_imgsz)
+                max_inference_fps = float(config.max_inference_fps)
+                jpeg_quality = int(config.jpeg_quality)
                 camera_index = int(config.camera_index)
                 camera_zone = str(config.camera_zone)
 
@@ -2067,10 +2127,15 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.armed = True
                 config.motion_tracks.clear()
                 config.next_motion_track_id = 1
+                last_detections = []
+                last_motion_detected = False
+                last_motion_score = 0.0
                 paused = make_status_frame(out_width or 640, out_height or 360, "Camera is OFF")
                 if paused is not None:
+                    ok, encoded = cv2.imencode(".jpg", paused, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
                     with config.frame_lock:
                         config.latest_frame = paused
+                        config.latest_jpeg = encoded.tobytes() if ok else None
                 time.sleep(0.15)
                 continue
 
@@ -2078,6 +2143,8 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 cap.release()
                 cap = None
                 active_cam_index = camera_index
+                allowed_ids = None
+                next_inference_at = 0.0
 
             if cap is None:
                 cap = _open_camera_capture(camera_index)
@@ -2092,71 +2159,106 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         f"Camera {camera_index} unavailable",
                     )
                     if unavailable is not None:
+                        ok, encoded = cv2.imencode(
+                            ".jpg",
+                            unavailable,
+                            [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality],
+                        )
                         with config.frame_lock:
                             config.latest_frame = unavailable
+                            config.latest_jpeg = encoded.tobytes() if ok else None
                     time.sleep(1.0)
                     continue
                 active_cam_index = camera_index
+                allowed_ids = None
+                next_inference_at = 0.0
 
             ok, frame = cap.read()
             if not ok:
                 cap.release()
                 cap = None
+                allowed_ids = None
                 time.sleep(0.1)
                 continue
 
-            detections = []
-            motion_detected = False
-            motion_score = 0.0
+            detections = last_detections
+            motion_detected = last_motion_detected
+            motion_score = last_motion_score
+            inference_ran = False
             if detection_enabled:
+                now = time.perf_counter()
+                inference_due = max_inference_fps <= 0.0 or now >= next_inference_at
+                if inference_due:
+                    inference_ran = True
+                    if max_inference_fps > 0.0:
+                        next_inference_at = now + (1.0 / max(0.1, max_inference_fps))
+                    else:
+                        next_inference_at = 0.0
                 with config.model_lock:
                     model = config.model
-                    allowed_ids = get_allowed_class_ids(model, FOOD_CLASS_NAMES)
-                    # Keep compatibility with Ultralytics releases that differ on `classes`.
-                    try:
-                        results = model.predict(
-                            frame,
-                            verbose=False,
-                            conf=conf,
-                            iou=iou,
-                            classes=allowed_ids if allowed_ids else None,
+                    if inference_ran:
+                        if allowed_ids is None:
+                            allowed_ids = get_allowed_class_ids(model, FOOD_CLASS_NAMES)
+                        predict_kwargs = {
+                            "verbose": False,
+                            "conf": conf,
+                            "iou": iou,
+                            "imgsz": inference_imgsz,
+                            "classes": allowed_ids if allowed_ids else None,
+                        }
+                        # Keep compatibility with Ultralytics releases that differ on `classes`.
+                        try:
+                            results = model.predict(frame, **predict_kwargs)
+                        except TypeError:
+                            predict_kwargs.pop("classes", None)
+                            results = model.predict(frame, **predict_kwargs)
+                if inference_ran:
+                    result = results[0]
+                    detections = detections_from_result(result, allowed_names=FOOD_CLASS_NAMES)
+                    if motion_enabled:
+                        motion_detected, motion_score = detect_consumption_motion(
+                            config,
+                            detections,
+                            frame_width=int(frame.shape[1]),
+                            frame_height=int(frame.shape[0]),
                         )
-                    except TypeError:
-                        results = model.predict(
-                            frame,
-                            verbose=False,
-                            conf=conf,
-                            iou=iou,
-                        )
-                result = results[0]
-                detections = detections_from_result(result, allowed_names=FOOD_CLASS_NAMES)
-                motion_detected, motion_score = detect_consumption_motion(
-                    config,
-                    detections,
-                    frame_width=int(frame.shape[1]),
-                    frame_height=int(frame.shape[0]),
-                )
+                    else:
+                        config.motion_tracks.clear()
+                        config.next_motion_track_id = 1
+                        motion_detected = False
+                        motion_score = 0.0
+                    last_detections = detections
+                    last_motion_detected = motion_detected
+                    last_motion_score = motion_score
             else:
                 config.motion_tracks.clear()
                 config.next_motion_track_id = 1
+                last_detections = []
+                last_motion_detected = False
+                last_motion_score = 0.0
+                next_inference_at = 0.0
+                detections = []
+                motion_detected = False
+                motion_score = 0.0
 
             # This debounce logic makes "item stays in view" produce one alert rather than many.
-            if detection_enabled and detections:
+            if detection_enabled and inference_ran and detections:
                 config.consecutive += 1
                 config.clear_count = 0
-            elif detection_enabled:
+            elif detection_enabled and inference_ran:
                 config.consecutive = 0
                 config.clear_count += 1
                 if config.clear_count >= max(1, clear_frames):
                     config.armed = True
-            else:
+            elif not detection_enabled:
                 config.consecutive = 0
                 config.clear_count = 0
                 config.armed = True
 
             now = time.time()
             if (
-                detections
+                inference_ran
+                and detections
                 and config.consecutive >= max(1, persist_frames)
                 and config.armed
                 and (now - config.last_alert_ts) >= max(0.0, cooldown)
@@ -2204,8 +2306,19 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     ),
                 )
 
+            ok, encoded = cv2.imencode(
+                ".jpg",
+                annotated,
+                [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality],
+            )
             with config.frame_lock:
                 config.latest_frame = annotated
+                config.latest_jpeg = encoded.tobytes() if ok else None
+
+            target_loop_delay = 1.0 / max(1.0, stream_fps)
+            remaining = target_loop_delay - (time.perf_counter() - loop_started_at)
+            if remaining > 0:
+                time.sleep(remaining)
     finally:
         if cap is not None:
             cap.release()
@@ -2234,6 +2347,24 @@ def main():
     parser.add_argument("--train-imgsz", type=int, default=640, help="Image size for accepted-sample training")
     parser.add_argument("--width", type=int, default=0, help="Resize width (0 = original)")
     parser.add_argument("--height", type=int, default=0, help="Resize height (0 = original)")
+    parser.add_argument(
+        "--inference-imgsz",
+        type=int,
+        default=640,
+        help="Inference image size passed to YOLO; smaller values reduce CPU/GPU usage",
+    )
+    parser.add_argument(
+        "--max-inference-fps",
+        type=float,
+        default=0.0,
+        help="Upper bound for YOLO inference frequency (0 = unlimited)",
+    )
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=75,
+        help="JPEG quality for the MJPEG browser stream",
+    )
     parser.add_argument("--camera-index", type=int, default=0, help="Camera index")
     parser.add_argument("--camera-zone", default="Zone A", help="Zone label assigned to this camera")
     parser.add_argument("--fps", type=int, default=10, help="Stream FPS")
@@ -2306,6 +2437,9 @@ def main():
         clear_frames=args.clear_frames,
         camera_zone=args.camera_zone,
         snippet_dir=args.snippet_dir or None,
+        inference_imgsz=args.inference_imgsz,
+        max_inference_fps=args.max_inference_fps,
+        jpeg_quality=args.jpeg_quality,
         training_dir=args.training_dir,
         train_epochs=args.train_epochs,
         train_imgsz=args.train_imgsz,
