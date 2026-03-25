@@ -325,6 +325,12 @@ HTML_PAGE = """<!doctype html>
             </label>
           </div>
           <div class=\"settings-row\">
+            <label class=\"settings-field\">Motion hold seconds
+              <input id=\"setMotionHoldSeconds\" type=\"number\" min=\"0\" max=\"5\" step=\"0.1\" />
+            </label>
+            <div></div>
+          </div>
+          <div class=\"settings-row\">
             <label class=\"settings-field\">Webcam device
               <select id=\"setCameraIndex\"></select>
             </label>
@@ -546,6 +552,7 @@ HTML_PAGE = """<!doctype html>
         document.getElementById('setMaxInferenceFps').value = Number(settings.max_inference_fps || 0).toFixed(1);
         document.getElementById('setJpegQuality').value = Number(settings.jpeg_quality || 75).toFixed(0);
         document.getElementById('setMotionEnabled').checked = Boolean(settings.motion_enabled);
+        document.getElementById('setMotionHoldSeconds').value = Number(settings.motion_hold_seconds || 0.1).toFixed(1);
         document.getElementById('setCameraIndex').value = String(Number(settings.camera_index || 0));
         document.getElementById('setCameraZone').value = settings.camera_zone || 'Zone A';
       }
@@ -575,6 +582,7 @@ HTML_PAGE = """<!doctype html>
           max_inference_fps: readNumberField('setMaxInferenceFps', 'max inference FPS'),
           jpeg_quality: Math.round(readNumberField('setJpegQuality', 'JPEG quality')),
           motion_enabled: document.getElementById('setMotionEnabled').checked,
+          motion_hold_seconds: readNumberField('setMotionHoldSeconds', 'motion hold seconds'),
           camera_index: Math.round(readNumberField('setCameraIndex', 'webcam device')),
           camera_zone: document.getElementById('setCameraZone').value,
         };
@@ -867,6 +875,8 @@ FOOD_CLASS_NAMES = {
     "bowl",
 }
 
+INFERENCE_CLASS_NAMES = set(FOOD_CLASS_NAMES) | {"person"}
+
 CONSUMPTION_CLASS_NAMES = {
     "apple",
     "banana",
@@ -879,6 +889,19 @@ CONSUMPTION_CLASS_NAMES = {
     "bottle",
     "cup",
 }
+
+DRINK_CONTAINER_CLASS_NAMES = {"bottle", "cup"}
+HANDHELD_FOOD_CLASS_NAMES = {
+    "apple",
+    "banana",
+    "orange",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "sandwich",
+}
+MOTION_TRIGGER_SCORE = 0.85
 
 CAMERA_ZONES = tuple(f"Zone {chr(ord('A') + idx)}" for idx in range(9))
 
@@ -919,22 +942,107 @@ def _extract_detection_geometry(det: dict) -> tuple[float, float, float] | None:
     return x, y, box_diag
 
 
-def _score_motion_track(track: dict, frame_diag: float, frame_height: int, config) -> float:
-    """Score a matched object track based on recent path, lift, and consistency."""
-    history = list(track.get("history", ()))
-    if len(history) < 6:
+def _consumption_track_key(class_name: str) -> str:
+    """Group classes that often flicker between similar labels across nearby frames."""
+    normalized = class_name.strip().lower()
+    if normalized in DRINK_CONTAINER_CLASS_NAMES:
+        return "drink_container"
+    if normalized in HANDHELD_FOOD_CLASS_NAMES:
+        return "handheld_food"
+    return normalized
+
+
+def _smooth_motion_history(history: list[tuple[float, float, float, float]]):
+    """Reduce detector jitter so motion scoring reacts to the actual trajectory."""
+    if not history:
+        return []
+    smoothed: list[tuple[float, float, float, float]] = [history[0]]
+    alpha = 0.45
+    prev_x, prev_y, prev_diag, _ = history[0]
+    for x, y, diag, ts in history[1:]:
+        prev_x = (prev_x * (1.0 - alpha)) + (x * alpha)
+        prev_y = (prev_y * (1.0 - alpha)) + (y * alpha)
+        prev_diag = (prev_diag * (1.0 - alpha)) + (diag * alpha)
+        smoothed.append((prev_x, prev_y, prev_diag, ts))
+    return smoothed
+
+
+def _extract_person_anchor(det: dict) -> tuple[float, float, float, float, float, float] | None:
+    """Estimate a rough mouth-area target from one person bounding box."""
+    bbox = det.get("bbox_xyxy")
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None
+    try:
+        x1, y1, x2, y2 = (float(value) for value in bbox)
+    except (TypeError, ValueError):
+        return None
+    width = max(1.0, x2 - x1)
+    height = max(1.0, y2 - y1)
+    center_x = x1 + (width * 0.5)
+    mouth_y = y1 + (height * 0.28)
+    radius = max(30.0, min(width, height) * 0.22)
+    return center_x, mouth_y, radius, x1, y1, x2, y2
+
+
+def _score_person_proximity(
+    person_detections: list[dict],
+    latest_point: tuple[float, float],
+    peak_point: tuple[float, float],
+) -> float:
+    """Reward motions that end near a detected person's upper face/head area."""
+    best_score = 0.0
+    latest_x, latest_y = latest_point
+    peak_x, peak_y = peak_point
+    for det in person_detections:
+        anchor = _extract_person_anchor(det)
+        if anchor is None:
+            continue
+        mouth_x, mouth_y, radius, x1, y1, x2, y2 = anchor
+        latest_distance = math.hypot(latest_x - mouth_x, latest_y - mouth_y)
+        peak_distance = math.hypot(peak_x - mouth_x, peak_y - mouth_y)
+        latest_score = max(0.0, 1.0 - (latest_distance / max(1.0, radius * 2.0)))
+        peak_score = max(0.0, 1.0 - (peak_distance / max(1.0, radius * 2.0)))
+        inside_upper_person = (
+            x1 <= latest_x <= x2 and y1 <= latest_y <= (y1 + ((y2 - y1) * 0.45))
+        )
+        best_score = max(
+            best_score,
+            latest_score,
+            peak_score,
+            1.0 if inside_upper_person else 0.0,
+        )
+    return best_score
+
+
+def _score_motion_track(
+    track: dict,
+    frame_diag: float,
+    frame_height: int,
+    config,
+    person_detections: list[dict] | None = None,
+) -> float:
+    """Score a matched object track based on recent path, lift, and proximity to a person."""
+    raw_history = list(track.get("history", ()))
+    if len(raw_history) < 4:
         return 0.0
+    history = _smooth_motion_history(raw_history)
     path_length = 0.0
     upward_total = 0.0
     downward_total = 0.0
     min_y = history[0][1]
+    min_entry = history[0]
+    rising_steps = 0
     for prev, cur in zip(history, history[1:]):
         path_length += math.hypot(cur[0] - prev[0], cur[1] - prev[1])
         delta_y = prev[1] - cur[1]
         upward_total += max(0.0, delta_y)
         downward_total += max(0.0, -delta_y)
-        min_y = min(min_y, cur[1])
-    first_x, first_y, _, _ = history[0]
+        if delta_y > max(2.0, frame_height * 0.006):
+            rising_steps += 1
+        if cur[1] < min_y:
+            min_y = cur[1]
+            min_entry = cur
+    first_x, first_y, first_diag, _ = history[0]
     last_x, last_y, _, _ = history[-1]
     net_displacement = math.hypot(last_x - first_x, last_y - first_y)
     net_upward = max(0.0, first_y - last_y)
@@ -947,22 +1055,30 @@ def _score_motion_track(track: dict, frame_diag: float, frame_height: int, confi
     vertical_gain_norm = max(0.0, first_y - min_y) / max(1.0, float(frame_height))
     linearity = net_displacement / max(1.0, path_length)
     vertical_dominance = net_upward / max(1.0, horizontal_travel + net_upward)
+    directional_consistency = rising_steps / max(1.0, float(len(history) - 1))
+    size_growth = max(0.0, (max(point[2] for point in history) - first_diag) / max(1.0, first_diag))
+    upper_zone_score = max(0.0, 0.72 - (min_y / max(1.0, float(frame_height)))) / 0.72
+    person_proximity = _score_person_proximity(
+        person_detections or [],
+        latest_point=(last_x, last_y),
+        peak_point=(min_entry[0], min_entry[1]),
+    )
 
-    # Hard gate: stationary objects often jitter a bit, but true eating/drinking motion
-    # should show net upward travel plus meaningful displacement over the whole window.
-    if displacement_norm < (config.motion_displacement_threshold * 0.65):
+    # Hard gate: there should be meaningful object movement, or a clear approach toward a
+    # detected person's head/face region, otherwise we are likely just seeing bbox jitter.
+    if displacement_norm < (config.motion_displacement_threshold * 0.35) and person_proximity < 0.65:
         track.get("score_history", deque()).clear()
         return 0.0
-    if net_upward_norm < (config.motion_upward_threshold * 0.75):
+    if vertical_gain_norm < (config.motion_upward_threshold * 0.45) and person_proximity < 0.55:
         track.get("score_history", deque()).clear()
         return 0.0
-    if vertical_gain_norm < (config.motion_upward_threshold * 1.0):
+    if net_upward_norm < (config.motion_upward_threshold * 0.35) and person_proximity < 0.75:
         track.get("score_history", deque()).clear()
         return 0.0
-    if linearity < 0.45:
+    if linearity < 0.22 and directional_consistency < 0.35 and person_proximity < 0.75:
         track.get("score_history", deque()).clear()
         return 0.0
-    if vertical_dominance < 0.35:
+    if vertical_dominance < 0.18 and person_proximity < 0.7:
         track.get("score_history", deque()).clear()
         return 0.0
 
@@ -972,29 +1088,44 @@ def _score_motion_track(track: dict, frame_diag: float, frame_height: int, confi
     net_upward_score = net_upward_norm / max(1e-6, config.motion_upward_threshold)
     lift_score = vertical_gain_norm / max(1e-6, config.motion_upward_threshold * 1.25)
     downward_penalty = downward_norm / max(1e-6, config.motion_upward_threshold)
+    size_growth_score = size_growth / 0.25
 
     raw_score = (
-        0.25 * displacement_score
-        + 0.10 * path_score
-        + 0.20 * upward_score
-        + 0.25 * net_upward_score
-        + 0.10 * lift_score
-        + 0.10 * linearity
-        - 0.20 * downward_penalty
+        0.16 * displacement_score
+        + 0.08 * path_score
+        + 0.16 * upward_score
+        + 0.16 * net_upward_score
+        + 0.12 * lift_score
+        + 0.08 * linearity
+        + 0.07 * directional_consistency
+        + 0.05 * upper_zone_score
+        + 0.05 * size_growth_score
+        + 0.17 * person_proximity
+        - 0.10 * downward_penalty
     )
     score_history = track.setdefault("score_history", deque(maxlen=max(3, config.motion_window // 3)))
     score_history.append(max(0.0, raw_score))
     return sum(score_history) / len(score_history)
 
 
-def detect_consumption_motion(config, detections: list[dict], frame_width: int, frame_height: int) -> tuple[bool, float]:
+def detect_consumption_motion(
+    config,
+    detections: list[dict],
+    frame_width: int,
+    frame_height: int,
+    person_detections: list[dict] | None = None,
+) -> tuple[bool, float]:
     """Heuristically score whether a detected item is moving like it is being consumed."""
     if not config.motion_enabled:
         return False, 0.0
 
     now = time.time()
     frame_diag = max(1.0, math.hypot(frame_width, frame_height))
-    stale_after = max(2.0, config.motion_window / max(1.0, config.stream_fps))
+    sample_fps = max(
+        1.0,
+        config.max_inference_fps if getattr(config, "max_inference_fps", 0.0) > 0.0 else config.stream_fps,
+    )
+    stale_after = max(2.0, config.motion_window / sample_fps)
 
     for track_id, track in list(config.motion_tracks.items()):
         if (now - float(track.get("last_seen", 0.0))) > stale_after:
@@ -1009,11 +1140,11 @@ def detect_consumption_motion(config, detections: list[dict], frame_width: int, 
         if geometry is None:
             continue
         x, y, box_diag = geometry
-        candidates.append((det_index, det, class_name, x, y, box_diag))
+        candidates.append((det_index, det, _consumption_track_key(class_name), x, y, box_diag))
 
     used_track_ids: set[int] = set()
     matched_track_ids: dict[int, int] = {}
-    for det_index, det, class_name, x, y, box_diag in sorted(
+    for det_index, det, track_key, x, y, box_diag in sorted(
         candidates,
         key=lambda item: float(item[1].get("confidence", 0.0)),
         reverse=True,
@@ -1024,7 +1155,7 @@ def detect_consumption_motion(config, detections: list[dict], frame_width: int, 
         for track_id, track in config.motion_tracks.items():
             if track_id in used_track_ids:
                 continue
-            if track.get("class_name") != class_name:
+            if track.get("track_key") != track_key:
                 continue
             last_x, last_y, _, _ = track["history"][-1]
             distance = math.hypot(x - last_x, y - last_y)
@@ -1035,10 +1166,11 @@ def detect_consumption_motion(config, detections: list[dict], frame_width: int, 
             best_track_id = config.next_motion_track_id
             config.next_motion_track_id += 1
             config.motion_tracks[best_track_id] = {
-                "class_name": class_name,
+                "track_key": track_key,
                 "history": deque(maxlen=config.motion_window),
                 "last_seen": now,
                 "score_history": deque(maxlen=max(3, config.motion_window // 3)),
+                "active_until": 0.0,
             }
         track = config.motion_tracks[best_track_id]
         track["last_seen"] = now
@@ -1054,14 +1186,29 @@ def detect_consumption_motion(config, detections: list[dict], frame_width: int, 
             det["consumption_motion"] = False
             continue
         track = config.motion_tracks.get(track_id)
-        score = 0.0 if track is None else _score_motion_track(track, frame_diag, frame_height, config)
+        score = (
+            0.0
+            if track is None
+            else _score_motion_track(
+                track,
+                frame_diag,
+                frame_height,
+                config,
+                person_detections=person_detections,
+            )
+        )
+        if track is not None and score >= MOTION_TRIGGER_SCORE:
+            track["active_until"] = now + max(0.0, float(getattr(config, "motion_hold_seconds", 0.1)))
+        effective_score = score
+        if track is not None and now <= float(track.get("active_until", 0.0)):
+            effective_score = max(effective_score, MOTION_TRIGGER_SCORE)
         det["motion_track_id"] = track_id
-        det["motion_score"] = round(score, 3)
-        det["consumption_motion"] = bool(score >= 1.0)
-        if score > max_score:
-            max_score = score
+        det["motion_score"] = round(effective_score, 3)
+        det["consumption_motion"] = bool(effective_score >= MOTION_TRIGGER_SCORE)
+        if effective_score > max_score:
+            max_score = effective_score
 
-    return max_score >= 1.0, round(max_score, 3)
+    return max_score >= MOTION_TRIGGER_SCORE, round(max_score, 3)
 
 
 def read_alerts(log_path: str | None) -> list[dict]:
@@ -1638,6 +1785,7 @@ def settings_snapshot(config) -> dict:
             "inference_imgsz": int(config.inference_imgsz),
             "max_inference_fps": float(config.max_inference_fps),
             "jpeg_quality": int(config.jpeg_quality),
+            "motion_hold_seconds": float(config.motion_hold_seconds),
             "camera_index": int(config.camera_index),
             "camera_zone": str(config.camera_zone),
             "updated_at": config.settings_updated_at,
@@ -1688,6 +1836,10 @@ def update_runtime_settings(config, payload: dict) -> dict:
             )
         if "jpeg_quality" in payload:
             config.jpeg_quality = clamp_int(payload["jpeg_quality"], "jpeg_quality", 40, 95)
+        if "motion_hold_seconds" in payload:
+            config.motion_hold_seconds = clamp_float(
+                payload["motion_hold_seconds"], "motion_hold_seconds", 0.0, 5.0
+            )
         if "camera_index" in payload:
             config.camera_index = clamp_int(payload["camera_index"], "camera_index", 0, 32)
         if "camera_zone" in payload:
@@ -1724,6 +1876,7 @@ class DashboardConfig:
         inference_imgsz,
         max_inference_fps,
         jpeg_quality,
+        motion_hold_seconds,
         training_dir,
         train_epochs,
         train_imgsz,
@@ -1771,6 +1924,7 @@ class DashboardConfig:
             "inference_imgsz": int(inference_imgsz),
             "max_inference_fps": float(max_inference_fps),
             "jpeg_quality": int(jpeg_quality),
+            "motion_hold_seconds": float(motion_hold_seconds),
             "camera_index": int(camera_index),
             "camera_zone": self.camera_zone,
             "motion_enabled": bool(motion_enabled),
@@ -1793,6 +1947,7 @@ class DashboardConfig:
         self.inference_imgsz = int(inference_imgsz)
         self.max_inference_fps = float(max_inference_fps)
         self.jpeg_quality = int(jpeg_quality)
+        self.motion_hold_seconds = float(motion_hold_seconds)
         self.motion_enabled = bool(motion_enabled)
         self.motion_window = max(4, int(motion_window))
         self.motion_displacement_threshold = float(motion_displacement_threshold)
@@ -2198,7 +2353,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     model = config.model
                     if inference_ran:
                         if allowed_ids is None:
-                            allowed_ids = get_allowed_class_ids(model, FOOD_CLASS_NAMES)
+                            allowed_ids = get_allowed_class_ids(model, INFERENCE_CLASS_NAMES)
                         predict_kwargs = {
                             "verbose": False,
                             "conf": conf,
@@ -2214,13 +2369,24 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                             results = model.predict(frame, **predict_kwargs)
                 if inference_ran:
                     result = results[0]
-                    detections = detections_from_result(result, allowed_names=FOOD_CLASS_NAMES)
+                    all_detections = detections_from_result(result, allowed_names=INFERENCE_CLASS_NAMES)
+                    detections = [
+                        det
+                        for det in all_detections
+                        if str(det.get("class_name", "")).strip().lower() in FOOD_CLASS_NAMES
+                    ]
+                    person_detections = [
+                        det
+                        for det in all_detections
+                        if str(det.get("class_name", "")).strip().lower() == "person"
+                    ]
                     if motion_enabled:
                         motion_detected, motion_score = detect_consumption_motion(
                             config,
                             detections,
                             frame_width=int(frame.shape[1]),
                             frame_height=int(frame.shape[0]),
+                            person_detections=person_detections,
                         )
                     else:
                         config.motion_tracks.clear()
@@ -2365,6 +2531,12 @@ def main():
         default=75,
         help="JPEG quality for the MJPEG browser stream",
     )
+    parser.add_argument(
+        "--motion-hold-seconds",
+        type=float,
+        default=0.1,
+        help="How long a positive motion signal stays active after being detected",
+    )
     parser.add_argument("--camera-index", type=int, default=0, help="Camera index")
     parser.add_argument("--camera-zone", default="Zone A", help="Zone label assigned to this camera")
     parser.add_argument("--fps", type=int, default=10, help="Stream FPS")
@@ -2440,6 +2612,7 @@ def main():
         inference_imgsz=args.inference_imgsz,
         max_inference_fps=args.max_inference_fps,
         jpeg_quality=args.jpeg_quality,
+        motion_hold_seconds=args.motion_hold_seconds,
         training_dir=args.training_dir,
         train_epochs=args.train_epochs,
         train_imgsz=args.train_imgsz,
