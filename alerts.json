@@ -450,37 +450,6 @@
     "updated_at": "2026-03-06T13:03:33"
   },
   {
-    "id": "50c3cc7a3a79",
-    "status": "new",
-    "timestamp": "2026-03-06T13:07:02",
-    "frame_size": {
-      "width": 1920,
-      "height": 1080
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.523,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.271,
-        "bbox_xyxy": [
-          825.73,
-          1023.82,
-          945.33,
-          1080.0
-        ],
-        "center_xy": [
-          885.53,
-          1051.91
-        ],
-        "motion_score": 0.523,
-        "consumption_motion": false,
-        "snippet_file": "50c3cc7a3a79_0_donut.jpg"
-      }
-    ]
-  },
-  {
     "id": "e8c5d7fd4fdf",
     "status": "new",
     "timestamp": "2026-03-06T13:07:52",
@@ -797,7 +766,7 @@
   },
   {
     "id": "1325c05df4b3",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-13T11:57:22",
     "frame_size": {
       "width": 1920,
@@ -822,13 +791,18 @@
         ],
         "motion_score": 0.0,
         "consumption_motion": false,
-        "snippet_file": "1325c05df4b3_0_bottle.jpg"
+        "snippet_file": "1325c05df4b3_0_bottle.jpg",
+        "training_exported": true,
+        "training_sample": "1325c05df4b3_0_bottle.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-25T15:02:18",
+    "updated_at": "2026-03-25T15:02:18"
   },
   {
     "id": "c72e76221c0d",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-13T12:01:43",
     "frame_size": {
       "width": 1920,
@@ -853,13 +827,18 @@
         ],
         "motion_score": 0.101,
         "consumption_motion": false,
-        "snippet_file": "c72e76221c0d_0_bottle.jpg"
+        "snippet_file": "c72e76221c0d_0_bottle.jpg",
+        "training_exported": true,
+        "training_sample": "c72e76221c0d_0_bottle.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-25T15:02:17",
+    "updated_at": "2026-03-25T15:02:17"
   },
   {
     "id": "8b76c10f6401",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-13T12:01:53",
     "frame_size": {
       "width": 1920,
@@ -884,158 +863,78 @@
         ],
         "motion_score": 0.039,
         "consumption_motion": false,
-        "snippet_file": "8b76c10f6401_0_bottle.jpg"
+        "snippet_file": "8b76c10f6401_0_bottle.jpg",
+        "training_exported": true,
+        "training_sample": "8b76c10f6401_0_bottle.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-25T15:02:17",
+    "updated_at": "2026-03-25T15:02:17"
   },
   {
-    "id": "024b1018c060",
+    "id": "c7cde0afde58",
     "status": "new",
-    "timestamp": "2026-03-25T14:50:56",
-    "zone": "Zone G",
-    "frame_size": {
-      "width": 1920,
-      "height": 1080
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.9523,
-        "bbox_xyxy": [
-          223.03,
-          531.07,
-          630.71,
-          949.48
-        ],
-        "center_xy": [
-          426.87,
-          740.28
-        ],
-        "motion_score": 0.0,
-        "consumption_motion": false,
-        "zone": "Zone G",
-        "snippet_file": "024b1018c060_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "77801248c7c4",
-    "status": "new",
-    "timestamp": "2026-03-25T14:51:37",
+    "timestamp": "2026-03-25T15:09:23",
     "zone": "Zone A",
     "frame_size": {
       "width": 1920,
       "height": 1080
     },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.855,
     "detections": [
       {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.9469,
+        "class_id": 53,
+        "class_name": "pizza",
+        "confidence": 0.8589,
         "bbox_xyxy": [
-          871.01,
-          755.41,
-          1224.44,
-          1078.72
+          393.83,
+          541.26,
+          724.99,
+          870.77
         ],
         "center_xy": [
-          1047.72,
-          917.07
+          559.41,
+          706.02
         ],
-        "motion_score": 0.0,
-        "consumption_motion": false,
+        "motion_score": 1.855,
+        "consumption_motion": true,
         "zone": "Zone A",
-        "snippet_file": "77801248c7c4_0_donut.jpg"
+        "snippet_file": "c7cde0afde58_0_pizza.jpg"
       }
     ]
   },
   {
-    "id": "2eebc170f03b",
+    "id": "e812b796cff9",
     "status": "new",
-    "timestamp": "2026-03-25T14:51:47",
-    "zone": "Zone F",
+    "timestamp": "2026-03-25T15:10:22",
+    "zone": "Zone A",
     "frame_size": {
       "width": 1920,
       "height": 1080
     },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.383,
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 4.081,
     "detections": [
       {
         "class_id": 54,
         "class_name": "donut",
-        "confidence": 0.8927,
+        "confidence": 0.9005,
         "bbox_xyxy": [
-          772.28,
-          507.41,
-          1093.61,
-          890.44
+          109.83,
+          633.84,
+          555.16,
+          900.6
         ],
         "center_xy": [
-          932.94,
-          698.93
+          332.49,
+          767.22
         ],
-        "motion_score": 0.383,
-        "consumption_motion": false,
-        "zone": "Zone F",
-        "snippet_file": "2eebc170f03b_0_donut.jpg"
-      },
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.3526,
-        "bbox_xyxy": [
-          1136.48,
-          660.39,
-          1333.58,
-          830.43
-        ],
-        "center_xy": [
-          1235.03,
-          745.41
-        ],
-        "motion_score": 0.383,
-        "consumption_motion": false,
-        "zone": "Zone F",
-        "snippet_file": "2eebc170f03b_1_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "d23f9f60455a",
-    "status": "new",
-    "timestamp": "2026-03-25T14:52:25",
-    "zone": "Zone F",
-    "frame_size": {
-      "width": 1920,
-      "height": 1080
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.9488,
-        "bbox_xyxy": [
-          943.11,
-          723.31,
-          1336.68,
-          1077.93
-        ],
-        "center_xy": [
-          1139.9,
-          900.62
-        ],
-        "motion_score": 0.0,
-        "consumption_motion": false,
-        "zone": "Zone F",
-        "snippet_file": "d23f9f60455a_0_donut.jpg"
+        "motion_score": 4.081,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "e812b796cff9_0_donut.jpg"
       }
     ]
   }

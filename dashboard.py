@@ -273,6 +273,12 @@ HTML_PAGE = """<!doctype html>
             </label>
           </div>
           <div class=\"settings-row\">
+            <label class=\"settings-field\">Webcam device
+              <select id=\"setCameraIndex\"></select>
+            </label>
+            <div></div>
+          </div>
+          <div class=\"settings-row\">
             <label class=\"settings-field\">Camera zone
               <select id=\"setCameraZone\">
                 <option value=\"Zone A\">Zone A</option>
@@ -468,14 +474,15 @@ HTML_PAGE = """<!doctype html>
       function applySettingsToForm(settings) {
         document.getElementById('setCameraEnabled').checked = Boolean(settings.camera_enabled);
         document.getElementById('setDetectionEnabled').checked = Boolean(settings.detection_enabled);
-        document.getElementById('setConf').value = Number(settings.conf || 0.25).toFixed(2);
-        document.getElementById('setIou').value = Number(settings.iou || 0.45).toFixed(2);
-        document.getElementById('setPersistFrames').value = Number(settings.persist_frames || 3);
-        document.getElementById('setClearFrames').value = Number(settings.clear_frames || 10);
-        document.getElementById('setCooldown').value = Number(settings.cooldown || 10).toFixed(1);
+        document.getElementById('setConf').value = Number(settings.conf || 0.55).toFixed(2);
+        document.getElementById('setIou').value = Number(settings.iou || 0.40).toFixed(2);
+        document.getElementById('setPersistFrames').value = Number(settings.persist_frames || 5);
+        document.getElementById('setClearFrames').value = Number(settings.clear_frames || 15);
+        document.getElementById('setCooldown').value = Number(settings.cooldown || 15).toFixed(1);
         document.getElementById('setStreamFps').value = Number(settings.stream_fps || 10).toFixed(0);
         document.getElementById('setWidth').value = Number(settings.width || 0).toFixed(0);
         document.getElementById('setHeight').value = Number(settings.height || 0).toFixed(0);
+        document.getElementById('setCameraIndex').value = String(Number(settings.camera_index || 0));
         document.getElementById('setCameraZone').value = settings.camera_zone || 'Zone A';
       }
 
@@ -500,8 +507,42 @@ HTML_PAGE = """<!doctype html>
           stream_fps: readNumberField('setStreamFps', 'stream FPS'),
           width: Math.round(readNumberField('setWidth', 'display width')),
           height: Math.round(readNumberField('setHeight', 'display height')),
+          camera_index: Math.round(readNumberField('setCameraIndex', 'webcam device')),
           camera_zone: document.getElementById('setCameraZone').value,
         };
+      }
+
+      async function loadCameraDevices(selectedIndex = 0) {
+        const select = document.getElementById('setCameraIndex');
+        try {
+          const res = await fetch('/cameras');
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          const devices = await res.json();
+          const targetValue = String(Number(selectedIndex || 0));
+          select.innerHTML = '';
+          devices.forEach((device) => {
+            const option = document.createElement('option');
+            option.value = String(Number(device.index || 0));
+            option.textContent = device.label || `Camera ${option.value}`;
+            select.appendChild(option);
+          });
+          const hasSelected = Array.from(select.options).some((option) => option.value === targetValue);
+          if (!hasSelected) {
+            const fallback = document.createElement('option');
+            fallback.value = targetValue;
+            fallback.textContent = `Camera ${targetValue}`;
+            select.appendChild(fallback);
+          }
+          select.value = targetValue;
+        } catch (err) {
+          select.innerHTML = '';
+          const fallback = document.createElement('option');
+          fallback.value = String(Number(selectedIndex || 0));
+          fallback.textContent = `Camera ${fallback.value}`;
+          select.appendChild(fallback);
+        }
       }
 
       async function loadSettings(showStatus = false) {
@@ -511,6 +552,7 @@ HTML_PAGE = """<!doctype html>
           throw new Error(text || `HTTP ${res.status}`);
         }
         const settings = await res.json();
+        await loadCameraDevices(settings.camera_index || 0);
         applySettingsToForm(settings);
         if (showStatus) {
           setSettingsStatus(`Loaded (${settings.updated_at || 'now'})`);
@@ -946,6 +988,42 @@ def export_accepted_alert_samples(alert: dict, config) -> int:
     return accepted
 
 
+def export_rejected_alert_samples(alert: dict, config) -> int:
+    """Copy rejected snippets into the dataset as negative samples with empty labels."""
+    if not isinstance(alert, dict):
+        return 0
+    detections = alert.get("detections")
+    if not isinstance(detections, list):
+        return 0
+    if not config.snippet_dir:
+        return 0
+    os.makedirs(config.training_images_dir, exist_ok=True)
+    os.makedirs(config.training_labels_dir, exist_ok=True)
+    exported = 0
+    for idx, det in enumerate(detections):
+        if not isinstance(det, dict):
+            continue
+        snippet_file = str(det.get("snippet_file", "")).strip()
+        class_name = str(det.get("class_name", "")).strip().lower() or "item"
+        if not snippet_file:
+            continue
+        source_path = os.path.join(config.snippet_dir, snippet_file)
+        if not os.path.exists(source_path):
+            continue
+        ext = os.path.splitext(snippet_file)[1] or ".jpg"
+        sample_stem = f"{alert.get('id', 'alert')}_{idx}_{_safe_token(class_name)}_negative"
+        dest_image = os.path.join(config.training_images_dir, f"{sample_stem}{ext}")
+        dest_label = os.path.join(config.training_labels_dir, f"{sample_stem}.txt")
+        shutil.copy2(source_path, dest_image)
+        # Empty label files tell YOLO this image is a hard negative: it should contain none
+        # of the tracked classes even though the detector previously thought it did.
+        with open(dest_label, "w", encoding="utf-8") as label_handle:
+            label_handle.write("")
+        exported += 1
+    update_dataset_yaml(config, read_class_map(config.class_map_path))
+    return exported
+
+
 def training_status_snapshot(config) -> dict:
     """Expose the last-known training state for the dashboard polling endpoint."""
     with config.training_lock:
@@ -959,6 +1037,19 @@ def training_status_snapshot(config) -> dict:
         }
 
 
+def validate_training_environment() -> None:
+    """Fail early with a readable message when binary dependencies are incompatible."""
+    try:
+        from matplotlib import font_manager  # noqa: F401
+    except Exception as exc:
+        detail = str(exc) or exc.__class__.__name__
+        if "numpy.core.multiarray failed to import" in detail or "_ARRAY_API" in detail:
+            raise RuntimeError(
+                "Training dependencies are incompatible: reinstall or upgrade matplotlib so it matches the installed NumPy version."
+            ) from exc
+        raise RuntimeError(f"Training dependency import failed: {detail}") from exc
+
+
 def _train_on_accepted_samples(config) -> None:
     """Background worker that exports accepted data, trains, and hot-swaps the model."""
     with config.training_lock:
@@ -966,6 +1057,7 @@ def _train_on_accepted_samples(config) -> None:
         config.training_last_error = ""
         config.training_last_message = "Preparing dataset"
     try:
+        validate_training_environment()
         with config.alert_lock:
             alerts = read_alerts(config.alert_log)
             changed = ensure_alert_metadata(alerts)
@@ -1003,17 +1095,15 @@ def _train_on_accepted_samples(config) -> None:
             if os.path.exists(candidate):
                 best_path = candidate
         with config.training_lock:
-            config.training_last_message = "Loading trained weights"
-        if best_path and YOLO is not None:
-            new_model = YOLO(best_path)
-            with config.model_lock:
-                # Replace the in-memory model so new detections use the freshly trained weights.
-                config.model = new_model
-                config.model_path = best_path
+            # Keep the live detector on the original general-purpose model. Accepted-sample
+            # training is often class-specific and can quickly become too narrow for runtime
+            # detection if its weights are hot-swapped immediately.
+            config.training_last_message = "Training completed; weights saved for manual review"
         with config.training_lock:
             config.training_last_completed_at = datetime.now().isoformat(timespec="seconds")
             config.training_last_weights = best_path
-            config.training_last_message = "Training completed"
+            if not config.training_last_message:
+                config.training_last_message = "Training completed"
     except Exception as exc:
         with config.training_lock:
             config.training_last_error = str(exc)
@@ -1198,6 +1288,26 @@ def make_random_alerts(limit: int, frame_width: int, frame_height: int) -> list[
     return alerts
 
 
+def list_camera_devices(max_devices: int = 8) -> list[dict]:
+    """Probe a small range of camera indices for use in the dashboard dropdown."""
+    devices: list[dict] = []
+    if cv2 is None:
+        return devices
+    for index in range(max(1, max_devices)):
+        cap = cv2.VideoCapture(index)
+        available = bool(cap.isOpened())
+        if available:
+            cap.release()
+        devices.append(
+            {
+                "index": index,
+                "label": f"Camera {index}",
+                "available": available,
+            }
+        )
+    return [device for device in devices if device["available"]] or devices[:1]
+
+
 def make_status_frame(width: int, height: int, label: str):
     """Create a simple text frame shown when the real camera feed is unavailable/off."""
     if cv2 is None or np is None:
@@ -1274,6 +1384,7 @@ def settings_snapshot(config) -> dict:
             "stream_fps": float(config.stream_fps),
             "width": int(config.width),
             "height": int(config.height),
+            "camera_index": int(config.camera_index),
             "camera_zone": str(config.camera_zone),
             "updated_at": config.settings_updated_at,
             "test_mode": bool(config.test_mode),
@@ -1313,6 +1424,8 @@ def update_runtime_settings(config, payload: dict) -> dict:
             config.width = clamp_int(payload["width"], "width", 0, 3840)
         if "height" in payload:
             config.height = clamp_int(payload["height"], "height", 0, 2160)
+        if "camera_index" in payload:
+            config.camera_index = clamp_int(payload["camera_index"], "camera_index", 0, 32)
         if "camera_zone" in payload:
             config.camera_zone = normalize_camera_zone(payload["camera_zone"])
         config.settings_updated_at = datetime.now().isoformat(timespec="seconds")
@@ -1333,6 +1446,7 @@ class DashboardConfig:
         model,
         model_path,
         alert_log,
+        camera_index,
         width,
         height,
         stream_fps,
@@ -1355,6 +1469,7 @@ class DashboardConfig:
         self.model = model
         self.model_path = model_path
         self.alert_log = alert_log
+        self.camera_index = int(camera_index)
         self.width = width
         self.height = height
         self.stream_fps = stream_fps
@@ -1385,6 +1500,7 @@ class DashboardConfig:
             "stream_fps": float(stream_fps),
             "width": int(width),
             "height": int(height),
+            "camera_index": int(camera_index),
             "camera_zone": self.camera_zone,
         }
         self.stop = False
@@ -1437,6 +1553,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/settings":
             self._send_settings()
+            return
+        if parsed.path == "/cameras":
+            self._send_cameras()
             return
         if parsed.path == "/train/status":
             self._send_train_status()
@@ -1543,7 +1662,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if target_index < 0:
                 self.send_error(HTTPStatus.NOT_FOUND, "Alert not found")
                 return
-            if action in {"reject", "delete"}:
+            if action == "reject":
+                export_rejected_alert_samples(alerts[target_index], config)
+                alerts.pop(target_index)
+            elif action == "delete":
                 alerts.pop(target_index)
             else:
                 # Accepting an alert also exports its snippets into the training dataset.
@@ -1564,6 +1686,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Return the current runtime settings to the browser."""
         config: DashboardConfig = self.server.config
         self._send_json(settings_snapshot(config), HTTPStatus.OK)
+
+    def _send_cameras(self):
+        """Return the currently probeable webcam devices for the dropdown."""
+        self._send_json(list_camera_devices(), HTTPStatus.OK)
 
     def _update_settings(self):
         """Apply settings posted from the dashboard form."""
@@ -1689,6 +1815,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
     if cv2 is None:
         raise RuntimeError("OpenCV is required for live camera mode.")
     cap = None
+    active_cam_index = int(cam_index)
 
     try:
         while not config.stop:
@@ -1703,12 +1830,14 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 clear_frames = int(config.clear_frames)
                 out_width = int(config.width)
                 out_height = int(config.height)
+                camera_index = int(config.camera_index)
                 camera_zone = str(config.camera_zone)
 
             if not camera_enabled:
                 if cap is not None:
                     cap.release()
                     cap = None
+                    active_cam_index = camera_index
                 # Turning the camera off also resets the alert state machine.
                 config.consecutive = 0
                 config.clear_count = 0
@@ -1721,21 +1850,27 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 time.sleep(0.15)
                 continue
 
+            if cap is not None and active_cam_index != camera_index:
+                cap.release()
+                cap = None
+                active_cam_index = camera_index
+
             if cap is None:
-                cap = cv2.VideoCapture(cam_index)
+                cap = cv2.VideoCapture(camera_index)
                 if not cap.isOpened():
                     cap.release()
                     cap = None
                     unavailable = make_status_frame(
                         out_width or 640,
                         out_height or 360,
-                        "Camera unavailable",
+                        f"Camera {camera_index} unavailable",
                     )
                     if unavailable is not None:
                         with config.frame_lock:
                             config.latest_frame = unavailable
                     time.sleep(1.0)
                     continue
+                active_cam_index = camera_index
 
             ok, frame = cap.read()
             if not ok:
@@ -1872,26 +2007,27 @@ def main():
     parser.add_argument("--train-imgsz", type=int, default=640, help="Image size for accepted-sample training")
     parser.add_argument("--width", type=int, default=0, help="Resize width (0 = original)")
     parser.add_argument("--height", type=int, default=0, help="Resize height (0 = original)")
+    parser.add_argument("--camera-index", type=int, default=0, help="Camera index")
     parser.add_argument("--camera-zone", default="Zone A", help="Zone label assigned to this camera")
     parser.add_argument("--fps", type=int, default=10, help="Stream FPS")
-    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
-    parser.add_argument("--iou", type=float, default=0.45, help="IoU threshold")
+    parser.add_argument("--conf", type=float, default=0.55, help="Confidence threshold")
+    parser.add_argument("--iou", type=float, default=0.40, help="IoU threshold")
     parser.add_argument(
         "--persist-frames",
         type=int,
-        default=3,
+        default=5,
         help="Require this many consecutive frames with detections to alert",
     )
     parser.add_argument(
         "--cooldown",
         type=float,
-        default=10.0,
+        default=15.0,
         help="Minimum seconds between alerts",
     )
     parser.add_argument(
         "--clear-frames",
         type=int,
-        default=10,
+        default=15,
         help="Require this many consecutive clear frames before re-arming alerts",
     )
     parser.add_argument(
@@ -1932,6 +2068,7 @@ def main():
         model=model,
         model_path=args.model,
         alert_log=args.alert_log,
+        camera_index=args.camera_index,
         width=args.width,
         height=args.height,
         stream_fps=args.fps,

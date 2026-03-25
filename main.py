@@ -272,24 +272,24 @@ def main() -> int:
     parser.add_argument("--image", help="Path to image for single-image demo")
     parser.add_argument("--out", help="Output path for annotated image")
     parser.add_argument("--cam", type=int, default=0, help="Camera index for webcam demo")
-    parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
-    parser.add_argument("--iou", type=float, default=0.45, help="IoU threshold")
+    parser.add_argument("--conf", type=float, default=0.55, help="Confidence threshold")
+    parser.add_argument("--iou", type=float, default=0.40, help="IoU threshold")
     parser.add_argument(
         "--persist-frames",
         type=int,
-        default=3,
+        default=5,
         help="Require this many consecutive frames with detections to alert",
     )
     parser.add_argument(
         "--cooldown",
         type=float,
-        default=10.0,
+        default=15.0,
         help="Minimum seconds between alerts",
     )
     parser.add_argument(
         "--clear-frames",
         type=int,
-        default=10,
+        default=15,
         help="Require this many consecutive clear frames before re-arming alerts",
     )
     parser.add_argument(
