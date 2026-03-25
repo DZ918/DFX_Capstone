@@ -1,7 +1,10 @@
 import argparse
+from collections import deque
 import json
+import math
 import os
 import random
+import shutil
 import threading
 import time
 from datetime import datetime, timedelta
@@ -41,8 +44,8 @@ HTML_PAGE = """<!doctype html>
         --border: #e5e7eb;
         --new-bg: #fee2e2;
         --new-fg: #991b1b;
-        --ack-bg: #dcfce7;
-        --ack-fg: #166534;
+        --accepted-bg: #dcfce7;
+        --accepted-fg: #166534;
         --btn: #1f2937;
         --btn-hover: #111827;
       }
@@ -84,7 +87,7 @@ HTML_PAGE = """<!doctype html>
       .alert-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
       .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
       .status-new { background: var(--new-bg); color: var(--new-fg); }
-      .status-acknowledged { background: var(--ack-bg); color: var(--ack-fg); }
+      .status-accepted { background: var(--accepted-bg); color: var(--accepted-fg); }
       .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
       .det-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-bottom: 10px; }
       .det-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fafafa; }
@@ -103,8 +106,8 @@ HTML_PAGE = """<!doctype html>
         cursor: pointer;
       }
       .actions button:hover { background: var(--btn-hover); }
-      .actions button.delete { background: #991b1b; }
-      .actions button.delete:hover { background: #7f1d1d; }
+      .actions button.reject { background: #991b1b; }
+      .actions button.reject:hover { background: #7f1d1d; }
       .fold-section {
         margin-bottom: 10px;
         border: 1px solid var(--border);
@@ -267,7 +270,9 @@ HTML_PAGE = """<!doctype html>
             <button type=\"submit\">Apply settings</button>
             <button id=\"resetSettings\" type=\"button\" class=\"alt\">Reset defaults</button>
             <button id=\"reloadSettings\" type=\"button\" class=\"alt\">Reload</button>
+            <button id=\"trainAccepted\" type=\"button\">Train on accepted</button>
             <span id=\"settingsStatus\" class=\"settings-status\"></span>
+            <span id=\"trainStatus\" class=\"settings-status\"></span>
           </div>
         </form>
       </section>
@@ -278,9 +283,9 @@ HTML_PAGE = """<!doctype html>
       <section class=\"card\">
         <h2>Recent Alerts</h2>
         <div id=\"alertsPanel\">
-          <details id=\"ackSection\" class=\"fold-section\" style=\"display:none;\">
-            <summary>Acknowledged (<span id=\"ackCount\">0</span>)</summary>
-            <div id=\"ackAlerts\" class=\"alerts-list\"></div>
+          <details id=\"acceptedSection\" class=\"fold-section\" style=\"display:none;\">
+            <summary>Accepted (<span id=\"acceptedCount\">0</span>)</summary>
+            <div id=\"acceptedAlerts\" class=\"alerts-list\"></div>
           </details>
           <details id=\"newSection\" class=\"fold-section\" open>
             <summary>New / Active (<span id=\"newCount\">0</span>)</summary>
@@ -370,6 +375,53 @@ HTML_PAGE = """<!doctype html>
         const statusEl = document.getElementById('settingsStatus');
         statusEl.textContent = message || '';
         statusEl.style.color = isError ? '#b91c1c' : '#374151';
+      }
+
+      function setTrainStatus(message, isError = false) {
+        const statusEl = document.getElementById('trainStatus');
+        statusEl.textContent = message || '';
+        statusEl.style.color = isError ? '#b91c1c' : '#374151';
+      }
+
+      async function refreshTrainStatus() {
+        try {
+          const res = await fetch('/train/status');
+          if (!res.ok) {
+            return;
+          }
+          const data = await res.json();
+          if (data.running) {
+            setTrainStatus('Training running...');
+            return;
+          }
+          if (data.last_error) {
+            setTrainStatus(`Train failed: ${data.last_error}`, true);
+            return;
+          }
+          if (data.last_completed_at) {
+            setTrainStatus(`Last train: ${data.last_completed_at}`);
+            return;
+          }
+          setTrainStatus('');
+        } catch (err) {
+          setTrainStatus('Could not read train status', true);
+        }
+      }
+
+      async function triggerTraining() {
+        try {
+          const res = await fetch('/train/accepted', {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          setTrainStatus('Training started...');
+          refreshTrainStatus();
+        } catch (err) {
+          setTrainStatus(err.message || 'Could not start training', true);
+        }
       }
 
       function setupSettingsPanel() {
@@ -482,6 +534,7 @@ HTML_PAGE = """<!doctype html>
         const form = document.getElementById('settingsForm');
         const reloadBtn = document.getElementById('reloadSettings');
         const resetBtn = document.getElementById('resetSettings');
+        const trainBtn = document.getElementById('trainAccepted');
         form.addEventListener('submit', saveSettings);
         reloadBtn.addEventListener('click', async () => {
           try {
@@ -491,9 +544,11 @@ HTML_PAGE = """<!doctype html>
           }
         });
         resetBtn.addEventListener('click', resetSettingsToDefaults);
+        trainBtn.addEventListener('click', triggerTraining);
         loadSettings().catch(() => {
           setSettingsStatus('Could not load settings', true);
         });
+        refreshTrainStatus();
       }
 
       function fingerprintAlerts(alerts) {
@@ -512,19 +567,23 @@ HTML_PAGE = """<!doctype html>
       function renderAlertCard(alert, errorEl) {
         const detections = Array.isArray(alert.detections) ? alert.detections : [];
         const status = alert.status || 'new';
-        const badgeClass = status === 'acknowledged' ? 'status-acknowledged' : 'status-new';
-        const actionBtn = status === 'acknowledged'
-          ? `<button data-action=\"reopen\">Reopen</button>`
-          : `<button data-action=\"acknowledge\">Acknowledge</button>`;
+        const isAccepted = status === 'accepted';
+        const badgeClass = isAccepted ? 'status-accepted' : 'status-new';
+        const actionBtn = isAccepted
+          ? `<button class=\"reject\" data-action=\"delete\">Delete</button>`
+          : `<button data-action=\"accept\">Accept</button>`;
         const controls = alert.id
-          ? `<div class=\"actions\">${actionBtn}<button class=\"delete\" data-action=\"delete\">Delete</button></div>`
+          ? `<div class=\"actions\">${actionBtn}${isAccepted ? '' : '<button class=\"reject\" data-action=\"reject\">Reject</button>'}</div>`
+          : '';
+        const motionTag = alert.consumption_motion_detected
+          ? ` | consumption motion (${Number(alert.consumption_motion_score || 0).toFixed(2)})`
           : '';
         const item = document.createElement('article');
         item.className = 'alert';
         item.innerHTML =
           `<div class=\"alert-head\"><span class=\"badge ${badgeClass}\">${escapeHtml(status)}</span>` +
           `<span>${escapeHtml(alert.timestamp || 'unknown time')}</span></div>` +
-          `<div class=\"meta\">${detections.length} detection(s)</div>` +
+          `<div class=\"meta\">${detections.length} detection(s)${escapeHtml(motionTag)}</div>` +
           `<div class=\"det-grid\">${detections.map(renderDetection).join('')}</div>` +
           controls;
         item.querySelectorAll('button[data-action]').forEach(btn => {
@@ -560,14 +619,14 @@ HTML_PAGE = """<!doctype html>
           }
           lastAlertsFingerprint = nextFingerprint;
           const activeList = document.getElementById('activeAlerts');
-          const ackList = document.getElementById('ackAlerts');
-          const ackCount = document.getElementById('ackCount');
+          const acceptedList = document.getElementById('acceptedAlerts');
+          const acceptedCount = document.getElementById('acceptedCount');
           const newCount = document.getElementById('newCount');
-          const ackSection = document.getElementById('ackSection');
+          const acceptedSection = document.getElementById('acceptedSection');
           activeList.innerHTML = '';
-          ackList.innerHTML = '';
-          const activeAlerts = ordered.filter((alert) => (alert.status || 'new') !== 'acknowledged');
-          const acknowledgedAlerts = ordered.filter((alert) => (alert.status || 'new') === 'acknowledged');
+          acceptedList.innerHTML = '';
+          const activeAlerts = ordered.filter((alert) => (alert.status || 'new') !== 'accepted');
+          const acceptedAlerts = ordered.filter((alert) => (alert.status || 'new') === 'accepted');
           if (activeAlerts.length === 0) {
             activeList.innerHTML = '<div class=\"empty-note\">No active alerts right now.</div>';
           } else {
@@ -576,15 +635,15 @@ HTML_PAGE = """<!doctype html>
             });
           }
           newCount.textContent = String(activeAlerts.length);
-          acknowledgedAlerts.forEach((alert) => {
-            ackList.appendChild(renderAlertCard(alert, errorEl));
+          acceptedAlerts.forEach((alert) => {
+            acceptedList.appendChild(renderAlertCard(alert, errorEl));
           });
-          ackCount.textContent = String(acknowledgedAlerts.length);
-          if (acknowledgedAlerts.length === 0) {
-            ackSection.open = false;
-            ackSection.style.display = 'none';
+          acceptedCount.textContent = String(acceptedAlerts.length);
+          if (acceptedAlerts.length === 0) {
+            acceptedSection.open = false;
+            acceptedSection.style.display = 'none';
           } else {
-            ackSection.style.display = '';
+            acceptedSection.style.display = '';
           }
         } catch (err) {
           errorEl.textContent = 'Could not load alerts right now.';
@@ -596,7 +655,9 @@ HTML_PAGE = """<!doctype html>
       setupSettingsPanel();
       setupSettingsForm();
       refreshAlerts();
+      refreshTrainStatus();
       setInterval(refreshAlerts, 2000);
+      setInterval(refreshTrainStatus, 5000);
     </script>
   </body>
 </html>
@@ -619,6 +680,19 @@ FOOD_CLASS_NAMES = {
     "bowl",
 }
 
+CONSUMPTION_CLASS_NAMES = {
+    "apple",
+    "banana",
+    "orange",
+    "hot dog",
+    "pizza",
+    "donut",
+    "cake",
+    "sandwich",
+    "bottle",
+    "cup",
+}
+
 
 def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
     names = getattr(model, "names", None)
@@ -635,6 +709,67 @@ def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
         if name and name.strip().lower() in allowed_names:
             allowed.append(int(cls_id))
     return sorted(allowed)
+
+
+def detect_consumption_motion(config, detections: list[dict], frame_width: int, frame_height: int) -> tuple[bool, float]:
+    if not config.motion_enabled:
+        return False, 0.0
+    now = time.time()
+    class_centers: dict[str, list[tuple[float, float]]] = {}
+    for det in detections:
+        class_name = str(det.get("class_name", "")).strip().lower()
+        if class_name not in CONSUMPTION_CLASS_NAMES:
+            continue
+        center = det.get("center_xy")
+        if not isinstance(center, (list, tuple)) or len(center) != 2:
+            continue
+        try:
+            x = float(center[0])
+            y = float(center[1])
+        except (TypeError, ValueError):
+            continue
+        class_centers.setdefault(class_name, []).append((x, y))
+
+    stale_after = max(2.0, config.motion_window / max(1.0, config.stream_fps))
+    for class_name, history in list(config.motion_history.items()):
+        fresh = [entry for entry in history if (now - entry[2]) <= stale_after]
+        if fresh:
+            config.motion_history[class_name] = deque(fresh, maxlen=config.motion_window)
+        else:
+            config.motion_history.pop(class_name, None)
+
+    for class_name, centers in class_centers.items():
+        avg_x = sum(c[0] for c in centers) / len(centers)
+        avg_y = sum(c[1] for c in centers) / len(centers)
+        history = config.motion_history.get(class_name)
+        if history is None:
+            history = deque(maxlen=config.motion_window)
+            config.motion_history[class_name] = history
+        history.append((avg_x, avg_y, now))
+
+    frame_diag = max(1.0, math.hypot(frame_width, frame_height))
+    class_scores: dict[str, float] = {}
+    for class_name, history in config.motion_history.items():
+        if class_name not in class_centers or len(history) < 4:
+            continue
+        first_x, first_y, _ = history[0]
+        last_x, last_y, _ = history[-1]
+        displacement_norm = math.hypot(last_x - first_x, last_y - first_y) / frame_diag
+        upward_norm = max(0.0, (first_y - last_y) / max(1.0, float(frame_height)))
+        displacement_score = displacement_norm / max(1e-6, config.motion_displacement_threshold)
+        upward_score = upward_norm / max(1e-6, config.motion_upward_threshold)
+        class_scores[class_name] = 0.6 * displacement_score + 0.4 * upward_score
+
+    max_score = 0.0
+    for det in detections:
+        class_name = str(det.get("class_name", "")).strip().lower()
+        score = class_scores.get(class_name, 0.0)
+        det["motion_score"] = round(score, 3)
+        det["consumption_motion"] = bool(score >= 1.0)
+        if score > max_score:
+            max_score = score
+
+    return max_score >= 1.0, round(max_score, 3)
 
 
 def read_alerts(log_path: str | None) -> list[dict]:
@@ -665,10 +800,185 @@ def ensure_alert_metadata(alerts: list[dict]) -> bool:
         if not alert.get("id"):
             alert["id"] = uuid4().hex[:12]
             changed = True
-        if not alert.get("status"):
+        status = str(alert.get("status", "")).strip().lower()
+        if status == "acknowledged":
+            alert["status"] = "accepted"
+            changed = True
+        elif status not in {"new", "accepted"}:
             alert["status"] = "new"
             changed = True
     return changed
+
+
+def read_class_map(path: str) -> dict[str, int]:
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+            if not isinstance(data, dict):
+                return {}
+            parsed: dict[str, int] = {}
+            for class_name, class_idx in data.items():
+                if isinstance(class_name, str):
+                    try:
+                        parsed[class_name] = int(class_idx)
+                    except (TypeError, ValueError):
+                        continue
+            return parsed
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def write_class_map(path: str, class_map: dict[str, int]) -> None:
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(class_map, handle, indent=2, sort_keys=True)
+
+
+def update_dataset_yaml(config, class_map: dict[str, int]) -> None:
+    os.makedirs(config.training_data_dir, exist_ok=True)
+    os.makedirs(config.training_images_dir, exist_ok=True)
+    os.makedirs(config.training_labels_dir, exist_ok=True)
+    names = [name for name, _ in sorted(class_map.items(), key=lambda item: item[1])]
+    if not names:
+        names = ["item"]
+    yaml_lines = [
+        f"path: {os.path.abspath(config.training_data_dir)}",
+        "train: images",
+        "val: images",
+        "names:",
+    ]
+    for idx, name in enumerate(names):
+        yaml_lines.append(f"  {idx}: {name}")
+    with open(config.training_yaml_path, "w", encoding="utf-8") as handle:
+        handle.write("\n".join(yaml_lines) + "\n")
+
+
+def export_accepted_alert_samples(alert: dict, config) -> int:
+    if not isinstance(alert, dict):
+        return 0
+    detections = alert.get("detections")
+    if not isinstance(detections, list):
+        return 0
+    if not config.snippet_dir:
+        return 0
+    os.makedirs(config.training_images_dir, exist_ok=True)
+    os.makedirs(config.training_labels_dir, exist_ok=True)
+    class_map = read_class_map(config.class_map_path)
+    accepted = 0
+    for idx, det in enumerate(detections):
+        if not isinstance(det, dict):
+            continue
+        if det.get("training_exported"):
+            continue
+        snippet_file = str(det.get("snippet_file", "")).strip()
+        class_name = str(det.get("class_name", "")).strip().lower()
+        if not snippet_file or not class_name:
+            continue
+        source_path = os.path.join(config.snippet_dir, snippet_file)
+        if not os.path.exists(source_path):
+            continue
+        if class_name not in class_map:
+            class_map[class_name] = len(class_map)
+        class_id = class_map[class_name]
+        ext = os.path.splitext(snippet_file)[1] or ".jpg"
+        sample_stem = f"{alert.get('id', 'alert')}_{idx}_{_safe_token(class_name)}"
+        dest_image = os.path.join(config.training_images_dir, f"{sample_stem}{ext}")
+        dest_label = os.path.join(config.training_labels_dir, f"{sample_stem}.txt")
+        shutil.copy2(source_path, dest_image)
+        with open(dest_label, "w", encoding="utf-8") as label_handle:
+            # Snippets are tight crops of one object, so full-image box is correct.
+            label_handle.write(f"{class_id} 0.5 0.5 1.0 1.0\n")
+        det["training_exported"] = True
+        det["training_sample"] = os.path.basename(dest_image)
+        accepted += 1
+    write_class_map(config.class_map_path, class_map)
+    update_dataset_yaml(config, class_map)
+    return accepted
+
+
+def training_status_snapshot(config) -> dict:
+    with config.training_lock:
+        return {
+            "running": bool(config.training_running),
+            "last_started_at": config.training_last_started_at,
+            "last_completed_at": config.training_last_completed_at,
+            "last_error": config.training_last_error,
+            "last_message": config.training_last_message,
+            "last_weights": config.training_last_weights,
+        }
+
+
+def _train_on_accepted_samples(config) -> None:
+    with config.training_lock:
+        config.training_last_started_at = datetime.now().isoformat(timespec="seconds")
+        config.training_last_error = ""
+        config.training_last_message = "Preparing dataset"
+    try:
+        with config.alert_lock:
+            alerts = read_alerts(config.alert_log)
+            changed = ensure_alert_metadata(alerts)
+            exported_total = 0
+            for alert in alerts:
+                if str(alert.get("status", "")).strip().lower() == "accepted":
+                    exported_total += export_accepted_alert_samples(alert, config)
+            if changed or exported_total > 0:
+                write_alerts(config.alert_log, alerts)
+        image_files = [
+            name
+            for name in os.listdir(config.training_images_dir)
+            if os.path.isfile(os.path.join(config.training_images_dir, name))
+        ] if os.path.isdir(config.training_images_dir) else []
+        if not image_files:
+            raise RuntimeError("No accepted snippets available for training yet.")
+        if YOLO is None:
+            raise RuntimeError("ultralytics is required to train.")
+        with config.training_lock:
+            config.training_last_message = f"Training on {len(image_files)} accepted snippets"
+        train_model = YOLO(config.model_path)
+        train_result = train_model.train(
+            data=config.training_yaml_path,
+            epochs=config.train_epochs,
+            imgsz=config.train_imgsz,
+            project=config.training_runs_dir,
+            name="accepted",
+            exist_ok=True,
+            verbose=False,
+        )
+        best_path = ""
+        if hasattr(train_result, "save_dir"):
+            candidate = os.path.join(str(train_result.save_dir), "weights", "best.pt")
+            if os.path.exists(candidate):
+                best_path = candidate
+        with config.training_lock:
+            config.training_last_message = "Loading trained weights"
+        if best_path and YOLO is not None:
+            new_model = YOLO(best_path)
+            with config.model_lock:
+                config.model = new_model
+                config.model_path = best_path
+        with config.training_lock:
+            config.training_last_completed_at = datetime.now().isoformat(timespec="seconds")
+            config.training_last_weights = best_path
+            config.training_last_message = "Training completed"
+    except Exception as exc:
+        with config.training_lock:
+            config.training_last_error = str(exc)
+            config.training_last_message = "Training failed"
+    finally:
+        with config.training_lock:
+            config.training_running = False
+
+
+def start_training_job(config) -> bool:
+    with config.training_lock:
+        if config.training_running:
+            return False
+        config.training_running = True
+        worker = threading.Thread(target=_train_on_accepted_samples, args=(config,), daemon=True)
+        config.training_thread = worker
+    worker.start()
+    return True
 
 
 def append_alert(log_path: str | None, alert: dict) -> None:
@@ -706,13 +1016,21 @@ def add_detection_snippets(frame, detections: list[dict], snippet_dir: str | Non
     return detections
 
 
-def create_alert(frame, detections: list[dict], snippet_dir: str | None) -> dict:
+def create_alert(
+    frame,
+    detections: list[dict],
+    snippet_dir: str | None,
+    motion_detected: bool = False,
+    motion_score: float = 0.0,
+) -> dict:
     alert_id = uuid4().hex[:12]
     return {
         "id": alert_id,
         "status": "new",
         "timestamp": datetime.now().isoformat(timespec="seconds"),
         "frame_size": {"width": int(frame.shape[1]), "height": int(frame.shape[0])},
+        "consumption_motion_detected": bool(motion_detected),
+        "consumption_motion_score": round(float(motion_score), 3),
         "detections": add_detection_snippets(frame, detections, snippet_dir, alert_id),
     }
 
@@ -748,6 +1066,8 @@ def draw_detections(frame, detections):
         x1, y1, x2, y2 = (int(v) for v in det["bbox_xyxy"])
         cv2.rectangle(annotated, (x1, y1), (x2, y2), (0, 180, 255), 2)
         label = f'{det["class_name"]} {det["confidence"]:.2f}'
+        if det.get("consumption_motion"):
+            label = f"{label} motion"
         cv2.putText(
             annotated,
             label,
@@ -799,7 +1119,7 @@ def make_random_alerts(limit: int, frame_width: int, frame_height: int) -> list[
         alerts.append(
             {
                 "id": uuid4().hex[:12],
-                "status": random.choice(["new", "acknowledged"]),
+                "status": random.choice(["new", "accepted"]),
                 "timestamp": alert_time.isoformat(timespec="seconds"),
                 "frame_size": {"width": frame_width, "height": frame_height},
                 "detections": detections,
@@ -919,6 +1239,7 @@ class DashboardConfig:
     def __init__(
         self,
         model,
+        model_path,
         alert_log,
         width,
         height,
@@ -929,9 +1250,17 @@ class DashboardConfig:
         cooldown,
         clear_frames,
         snippet_dir,
+        training_dir,
+        train_epochs,
+        train_imgsz,
+        motion_enabled,
+        motion_window,
+        motion_displacement_threshold,
+        motion_upward_threshold,
         test_mode,
     ):
         self.model = model
+        self.model_path = model_path
         self.alert_log = alert_log
         self.width = width
         self.height = height
@@ -949,6 +1278,8 @@ class DashboardConfig:
         self.frame_lock = threading.Lock()
         self.alert_lock = threading.Lock()
         self.settings_lock = threading.Lock()
+        self.model_lock = threading.Lock()
+        self.training_lock = threading.Lock()
         self.default_settings = {
             "camera_enabled": True,
             "detection_enabled": True,
@@ -967,6 +1298,28 @@ class DashboardConfig:
         self.armed = True
         self.last_alert_ts = 0.0
         self.test_mode = test_mode
+        self.training_dir = os.path.abspath(training_dir)
+        self.training_data_dir = os.path.join(self.training_dir, "dataset")
+        self.training_images_dir = os.path.join(self.training_data_dir, "images")
+        self.training_labels_dir = os.path.join(self.training_data_dir, "labels")
+        self.training_yaml_path = os.path.join(self.training_data_dir, "data.yaml")
+        self.class_map_path = os.path.join(self.training_dir, "class_map.json")
+        self.training_runs_dir = os.path.join(self.training_dir, "runs")
+        self.train_epochs = int(train_epochs)
+        self.train_imgsz = int(train_imgsz)
+        self.motion_enabled = bool(motion_enabled)
+        self.motion_window = max(4, int(motion_window))
+        self.motion_displacement_threshold = float(motion_displacement_threshold)
+        self.motion_upward_threshold = float(motion_upward_threshold)
+        self.motion_history: dict[str, deque] = {}
+        self.training_thread = None
+        self.training_running = False
+        self.training_last_started_at = ""
+        self.training_last_completed_at = ""
+        self.training_last_error = ""
+        self.training_last_message = ""
+        self.training_last_weights = ""
+        os.makedirs(self.training_dir, exist_ok=True)
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -989,6 +1342,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/settings":
             self._send_settings()
             return
+        if parsed.path == "/train/status":
+            self._send_train_status()
+            return
         if parsed.path.startswith("/snippets/"):
             self._send_snippet(parsed.path.removeprefix("/snippets/"))
             return
@@ -1007,6 +1363,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/settings":
             self._update_settings()
+            return
+        if parsed.path == "/train/accepted":
+            self._trigger_train_accepted()
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -1068,7 +1427,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         alert_id = str(payload.get("alert_id", "")).strip()
         action = str(payload.get("action", "")).strip().lower()
-        if not alert_id or action not in {"acknowledge", "reopen", "delete"}:
+        if not alert_id or action not in {"accept", "reject", "delete"}:
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid alert_id or action")
             return
 
@@ -1083,11 +1442,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if target_index < 0:
                 self.send_error(HTTPStatus.NOT_FOUND, "Alert not found")
                 return
-            if action == "delete":
+            if action in {"reject", "delete"}:
                 alerts.pop(target_index)
             else:
-                status = "acknowledged" if action == "acknowledge" else "new"
-                alerts[target_index]["status"] = status
+                exported_count = export_accepted_alert_samples(alerts[target_index], config)
+                alerts[target_index]["status"] = "accepted"
+                if exported_count > 0:
+                    try:
+                        current_samples = int(alerts[target_index].get("accepted_samples", 0))
+                    except (TypeError, ValueError):
+                        current_samples = 0
+                    alerts[target_index]["accepted_samples"] = current_samples + exported_count
+                alerts[target_index]["accepted_at"] = datetime.now().isoformat(timespec="seconds")
                 alerts[target_index]["updated_at"] = datetime.now().isoformat(timespec="seconds")
             write_alerts(config.alert_log, alerts)
         self._send_json({"ok": True, "action": action, "alert_id": alert_id}, HTTPStatus.OK)
@@ -1110,6 +1476,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
         config: DashboardConfig = self.server.config
         updated = reset_runtime_settings(config)
         self._send_json({"ok": True, "settings": updated}, HTTPStatus.OK)
+
+    def _send_train_status(self):
+        config: DashboardConfig = self.server.config
+        self._send_json(training_status_snapshot(config), HTTPStatus.OK)
+
+    def _trigger_train_accepted(self):
+        config: DashboardConfig = self.server.config
+        if config.test_mode:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Training is disabled in --test mode")
+            return
+        if YOLO is None:
+            self.send_error(HTTPStatus.BAD_REQUEST, "ultralytics is required to train")
+            return
+        started = start_training_job(config)
+        if not started:
+            self.send_error(HTTPStatus.CONFLICT, "Training is already running")
+            return
+        self._send_json({"ok": True, "started": True}, HTTPStatus.ACCEPTED)
 
     def _send_snippet(self, encoded_name: str):
         config: DashboardConfig = self.server.config
@@ -1196,8 +1580,6 @@ def camera_worker(config: DashboardConfig, cam_index: int):
         raise RuntimeError("OpenCV is required for live camera mode.")
     cap = None
 
-    allowed_ids = get_allowed_class_ids(config.model, FOOD_CLASS_NAMES)
-
     try:
         while not config.stop:
             with config.settings_lock:
@@ -1218,6 +1600,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.consecutive = 0
                 config.clear_count = 0
                 config.armed = True
+                config.motion_history.clear()
                 paused = make_status_frame(out_width or 640, out_height or 360, "Camera is OFF")
                 if paused is not None:
                     with config.frame_lock:
@@ -1249,24 +1632,37 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 continue
 
             detections = []
+            motion_detected = False
+            motion_score = 0.0
             if detection_enabled:
-                try:
-                    results = config.model.predict(
-                        frame,
-                        verbose=False,
-                        conf=conf,
-                        iou=iou,
-                        classes=allowed_ids if allowed_ids else None,
-                    )
-                except TypeError:
-                    results = config.model.predict(
-                        frame,
-                        verbose=False,
-                        conf=conf,
-                        iou=iou,
-                    )
+                with config.model_lock:
+                    model = config.model
+                    allowed_ids = get_allowed_class_ids(model, FOOD_CLASS_NAMES)
+                    try:
+                        results = model.predict(
+                            frame,
+                            verbose=False,
+                            conf=conf,
+                            iou=iou,
+                            classes=allowed_ids if allowed_ids else None,
+                        )
+                    except TypeError:
+                        results = model.predict(
+                            frame,
+                            verbose=False,
+                            conf=conf,
+                            iou=iou,
+                        )
                 result = results[0]
                 detections = detections_from_result(result, allowed_names=FOOD_CLASS_NAMES)
+                motion_detected, motion_score = detect_consumption_motion(
+                    config,
+                    detections,
+                    frame_width=int(frame.shape[1]),
+                    frame_height=int(frame.shape[0]),
+                )
+            else:
+                config.motion_history.clear()
 
             if detection_enabled and detections:
                 config.consecutive += 1
@@ -1288,13 +1684,29 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 and config.armed
                 and (now - config.last_alert_ts) >= max(0.0, cooldown)
             ):
-                alert = create_alert(frame, detections, snippet_dir=config.snippet_dir)
+                alert = create_alert(
+                    frame,
+                    detections,
+                    snippet_dir=config.snippet_dir,
+                    motion_detected=motion_detected,
+                    motion_score=motion_score,
+                )
                 with config.alert_lock:
                     append_alert(config.alert_log, alert)
                 config.last_alert_ts = now
                 config.armed = False
 
             annotated = draw_detections(frame, detections) if detection_enabled else frame.copy()
+            if detection_enabled and motion_detected:
+                cv2.putText(
+                    annotated,
+                    f"Eating/Drinking motion detected ({motion_score:.2f})",
+                    (18, 32),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.75,
+                    (18, 200, 18),
+                    2,
+                )
             if not detection_enabled:
                 cv2.putText(
                     annotated,
@@ -1334,6 +1746,13 @@ def main():
         default="snippets",
         help="Directory where per-detection crop images are stored (set empty to disable)",
     )
+    parser.add_argument(
+        "--training-dir",
+        default="training_data",
+        help="Directory where accepted samples and train runs are stored",
+    )
+    parser.add_argument("--train-epochs", type=int, default=10, help="Epochs when training accepted samples")
+    parser.add_argument("--train-imgsz", type=int, default=640, help="Image size for accepted-sample training")
     parser.add_argument("--width", type=int, default=0, help="Resize width (0 = original)")
     parser.add_argument("--height", type=int, default=0, help="Resize height (0 = original)")
     parser.add_argument("--fps", type=int, default=10, help="Stream FPS")
@@ -1357,6 +1776,30 @@ def main():
         default=10,
         help="Require this many consecutive clear frames before re-arming alerts",
     )
+    parser.add_argument(
+        "--motion-enabled",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Enable heuristic eating/drinking motion detection",
+    )
+    parser.add_argument(
+        "--motion-window",
+        type=int,
+        default=12,
+        help="Number of recent frames used for motion scoring",
+    )
+    parser.add_argument(
+        "--motion-displacement-threshold",
+        type=float,
+        default=0.07,
+        help="Normalized displacement threshold for motion scoring",
+    )
+    parser.add_argument(
+        "--motion-upward-threshold",
+        type=float,
+        default=0.02,
+        help="Normalized upward movement threshold for motion scoring",
+    )
     args = parser.parse_args()
 
     if not args.test:
@@ -1369,6 +1812,7 @@ def main():
 
     config = DashboardConfig(
         model=model,
+        model_path=args.model,
         alert_log=args.alert_log,
         width=args.width,
         height=args.height,
@@ -1379,6 +1823,13 @@ def main():
         cooldown=args.cooldown,
         clear_frames=args.clear_frames,
         snippet_dir=args.snippet_dir or None,
+        training_dir=args.training_dir,
+        train_epochs=args.train_epochs,
+        train_imgsz=args.train_imgsz,
+        motion_enabled=args.motion_enabled,
+        motion_window=args.motion_window,
+        motion_displacement_threshold=args.motion_displacement_threshold,
+        motion_upward_threshold=args.motion_upward_threshold,
         test_mode=args.test,
     )
 

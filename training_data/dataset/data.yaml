@@ -1,0 +1,5 @@
+path: /Users/augusto/Desktop/test opencv/training_data/dataset
+train: images
+val: images
+names:
+  0: bottle
