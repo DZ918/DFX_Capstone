@@ -1,3 +1,5 @@
+"""Minimal OpenCV + YOLO runner for image and webcam food/drink detection."""
+
 import argparse
 import json
 import os
@@ -33,6 +35,7 @@ FOOD_CLASS_NAMES = {
 
 
 def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
+    """Map human-readable class names to the integer class IDs exposed by YOLO."""
     names = getattr(model, "names", None)
     if names is None and hasattr(model, "model"):
         names = getattr(model.model, "names", None)
@@ -50,6 +53,7 @@ def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
 
 
 def append_alert(log_path: str | None, alert: dict) -> None:
+    """Append one alert record to the JSON log file, creating it if needed."""
     if not log_path:
         return
     alerts: list[dict] = []
@@ -67,6 +71,7 @@ def append_alert(log_path: str | None, alert: dict) -> None:
 
 
 def _safe_token(value: str) -> str:
+    """Convert a free-form label into a filesystem-safe token."""
     token = "".join(ch if ch.isalnum() else "_" for ch in value.strip().lower())
     token = token.strip("_")
     return token or "item"
@@ -78,6 +83,7 @@ def add_detection_snippets(
     snippet_dir: str | None,
     alert_id: str,
 ) -> list[dict]:
+    """Crop each detected object out of the frame and save it beside the alert."""
     if not snippet_dir:
         return detections
     os.makedirs(snippet_dir, exist_ok=True)
@@ -100,6 +106,7 @@ def add_detection_snippets(
 
 
 def detections_from_result(result, allowed_names: set[str] | None = None) -> list[dict]:
+    """Normalize one YOLO prediction result into plain JSON-serializable dicts."""
     detections: list[dict] = []
     if result.boxes is None or len(result.boxes) == 0:
         return detections
@@ -135,6 +142,7 @@ def run_webcam(
     alert_log: str | None,
     snippet_dir: str | None,
 ) -> None:
+    """Run the live webcam loop, annotate detections, and persist debounced alerts."""
     cap = cv2.VideoCapture(cam_index)
     if not cap.isOpened():
         raise RuntimeError(f"Could not open camera index {cam_index}.")
@@ -149,6 +157,7 @@ def run_webcam(
             ok, frame = cap.read()
             if not ok:
                 break
+            # Some Ultralytics versions support a `classes` filter directly; older ones do not.
             try:
                 results = model.predict(
                     frame,
@@ -176,6 +185,9 @@ def run_webcam(
                     2,
                 )
 
+            # The alert only fires after several consecutive detection frames and rearms only
+            # after the scene has been clear long enough. That avoids duplicate alerts while
+            # the same item remains in view.
             if detections:
                 consecutive += 1
                 clear_count = 0
@@ -218,6 +230,7 @@ def run_webcam(
 
 
 def run_image(model, image_path: str, out_path: str | None) -> None:
+    """Run detection once on a still image and either save or preview the result."""
     frame = cv2.imread(image_path)
     if frame is None:
         raise RuntimeError(f"Could not read image: {image_path}")
@@ -253,6 +266,7 @@ def run_image(model, image_path: str, out_path: str | None) -> None:
 
 
 def main() -> int:
+    """Parse CLI arguments, load the model, and dispatch to image or webcam mode."""
     parser = argparse.ArgumentParser(description="Quick OpenCV + YOLO demo")
     parser.add_argument("--model", default="yolov8n.pt", help="Path to YOLO model weights")
     parser.add_argument("--image", help="Path to image for single-image demo")

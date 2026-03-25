@@ -1,3 +1,5 @@
+"""Browser dashboard for live detection, alert review, and accepted-sample training."""
+
 import argparse
 from collections import deque
 import json
@@ -29,6 +31,8 @@ except Exception:
     YOLO = None
 
 
+# The frontend is small enough to keep inline: the Python server exposes JSON and
+# MJPEG endpoints, and this page consumes them directly without a separate build step.
 HTML_PAGE = """<!doctype html>
 <html lang=\"en\">
   <head>
@@ -145,12 +149,14 @@ HTML_PAGE = """<!doctype html>
         font-size: 12px;
         color: #374151;
       }
-      .settings-field input {
+      .settings-field input,
+      .settings-field select {
         border: 1px solid var(--border);
         border-radius: 8px;
         padding: 7px 8px;
         font-size: 13px;
         color: #111827;
+        background: #fff;
       }
       .settings-toggle {
         display: flex;
@@ -266,6 +272,21 @@ HTML_PAGE = """<!doctype html>
               <input id=\"setHeight\" type=\"number\" min=\"0\" step=\"1\" />
             </label>
           </div>
+          <div class=\"settings-row\">
+            <label class=\"settings-field\">Camera zone
+              <select id=\"setCameraZone\">
+                <option value=\"Zone A\">Zone A</option>
+                <option value=\"Zone B\">Zone B</option>
+                <option value=\"Zone C\">Zone C</option>
+                <option value=\"Zone D\">Zone D</option>
+                <option value=\"Zone E\">Zone E</option>
+                <option value=\"Zone F\">Zone F</option>
+                <option value=\"Zone G\">Zone G</option>
+                <option value=\"Zone H\">Zone H</option>
+                <option value=\"Zone I\">Zone I</option>
+              </select>
+            </label>
+          </div>
           <div class=\"settings-actions\">
             <button type=\"submit\">Apply settings</button>
             <button id=\"resetSettings\" type=\"button\" class=\"alt\">Reset defaults</button>
@@ -302,6 +323,7 @@ HTML_PAGE = """<!doctype html>
       </div>
     </div>
     <script>
+      // Escape user-controlled strings before placing them into HTML templates.
       function escapeHtml(value) {
         return String(value)
           .replaceAll('&', '&amp;')
@@ -311,6 +333,7 @@ HTML_PAGE = """<!doctype html>
           .replaceAll(\"'\", '&#39;');
       }
 
+      // Each detection renders as a small card so alerts can show multiple crops at once.
       function renderDetection(det) {
         const confidence = Number(det.confidence || 0).toFixed(2);
         const className = escapeHtml(det.class_name || 'item');
@@ -320,6 +343,7 @@ HTML_PAGE = """<!doctype html>
         return `<div class=\"det-card\">${snippet}<div class=\"det-label\">${className} (${confidence})</div></div>`;
       }
 
+      // The lightbox keeps the alert list compact while still allowing full-size inspection.
       function setupLightbox() {
         const lightbox = document.getElementById('lightbox');
         const lightboxImg = document.getElementById('lightboxImg');
@@ -424,6 +448,7 @@ HTML_PAGE = """<!doctype html>
         }
       }
 
+      // The settings panel is hidden by default because operators mostly watch the live feed.
       function setupSettingsPanel() {
         const opener = document.getElementById('openSettingsBtn');
         const card = document.getElementById('settingsCard');
@@ -439,6 +464,7 @@ HTML_PAGE = """<!doctype html>
         sync();
       }
 
+      // Mirror server-side runtime settings into the form so edits always start from real state.
       function applySettingsToForm(settings) {
         document.getElementById('setCameraEnabled').checked = Boolean(settings.camera_enabled);
         document.getElementById('setDetectionEnabled').checked = Boolean(settings.detection_enabled);
@@ -450,6 +476,7 @@ HTML_PAGE = """<!doctype html>
         document.getElementById('setStreamFps').value = Number(settings.stream_fps || 10).toFixed(0);
         document.getElementById('setWidth').value = Number(settings.width || 0).toFixed(0);
         document.getElementById('setHeight').value = Number(settings.height || 0).toFixed(0);
+        document.getElementById('setCameraZone').value = settings.camera_zone || 'Zone A';
       }
 
       function readNumberField(id, label) {
@@ -460,6 +487,7 @@ HTML_PAGE = """<!doctype html>
         return value;
       }
 
+      // Build the API payload from the current form values, with client-side validation first.
       function collectSettingsPayload() {
         return {
           camera_enabled: document.getElementById('setCameraEnabled').checked,
@@ -472,6 +500,7 @@ HTML_PAGE = """<!doctype html>
           stream_fps: readNumberField('setStreamFps', 'stream FPS'),
           width: Math.round(readNumberField('setWidth', 'display width')),
           height: Math.round(readNumberField('setHeight', 'display height')),
+          camera_zone: document.getElementById('setCameraZone').value,
         };
       }
 
@@ -530,6 +559,7 @@ HTML_PAGE = """<!doctype html>
         }
       }
 
+      // Wire the settings form once, then let periodic polling keep the training status fresh.
       function setupSettingsForm() {
         const form = document.getElementById('settingsForm');
         const reloadBtn = document.getElementById('reloadSettings');
@@ -551,21 +581,24 @@ HTML_PAGE = """<!doctype html>
         refreshTrainStatus();
       }
 
+      // A cheap fingerprint prevents unnecessary DOM rebuilds when the alert list is unchanged.
       function fingerprintAlerts(alerts) {
         return alerts.map((alert) => {
           const detections = Array.isArray(alert.detections) ? alert.detections : [];
           const detectionKey = detections
-            .map((det) => `${det.class_name || ''}:${det.confidence || ''}:${det.snippet_file || ''}`)
+            .map((det) => `${det.class_name || ''}:${det.confidence || ''}:${det.snippet_file || ''}:${det.zone || ''}`)
             .join('|');
-          return `${alert.id || ''}:${alert.status || ''}:${alert.timestamp || ''}:${detectionKey}`;
+          return `${alert.id || ''}:${alert.status || ''}:${alert.timestamp || ''}:${alert.zone || ''}:${detectionKey}`;
         }).join('||');
       }
 
       let lastAlertsFingerprint = '';
       let refreshInFlight = false;
 
+      // Alert cards are rebuilt from API data on every meaningful refresh.
       function renderAlertCard(alert, errorEl) {
         const detections = Array.isArray(alert.detections) ? alert.detections : [];
+        const zone = alert.zone || (detections[0] && detections[0].zone) || '';
         const status = alert.status || 'new';
         const isAccepted = status === 'accepted';
         const badgeClass = isAccepted ? 'status-accepted' : 'status-new';
@@ -578,12 +611,13 @@ HTML_PAGE = """<!doctype html>
         const motionTag = alert.consumption_motion_detected
           ? ` | consumption motion (${Number(alert.consumption_motion_score || 0).toFixed(2)})`
           : '';
+        const zoneTag = zone ? ` | ${zone}` : '';
         const item = document.createElement('article');
         item.className = 'alert';
         item.innerHTML =
           `<div class=\"alert-head\"><span class=\"badge ${badgeClass}\">${escapeHtml(status)}</span>` +
           `<span>${escapeHtml(alert.timestamp || 'unknown time')}</span></div>` +
-          `<div class=\"meta\">${detections.length} detection(s)${escapeHtml(motionTag)}</div>` +
+          `<div class=\"meta\">${detections.length} detection(s)${escapeHtml(zoneTag + motionTag)}</div>` +
           `<div class=\"det-grid\">${detections.map(renderDetection).join('')}</div>` +
           controls;
         item.querySelectorAll('button[data-action]').forEach(btn => {
@@ -693,8 +727,11 @@ CONSUMPTION_CLASS_NAMES = {
     "cup",
 }
 
+CAMERA_ZONES = tuple(f"Zone {chr(ord('A') + idx)}" for idx in range(9))
+
 
 def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
+    """Map readable class names to the numeric IDs expected by the YOLO API."""
     names = getattr(model, "names", None)
     if names is None and hasattr(model, "model"):
         names = getattr(model.model, "names", None)
@@ -712,6 +749,7 @@ def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
 
 
 def detect_consumption_motion(config, detections: list[dict], frame_width: int, frame_height: int) -> tuple[bool, float]:
+    """Heuristically score whether a detected item is moving like it is being consumed."""
     if not config.motion_enabled:
         return False, 0.0
     now = time.time()
@@ -730,6 +768,7 @@ def detect_consumption_motion(config, detections: list[dict], frame_width: int, 
             continue
         class_centers.setdefault(class_name, []).append((x, y))
 
+    # Drop old center points so motion is based only on a recent rolling window.
     stale_after = max(2.0, config.motion_window / max(1.0, config.stream_fps))
     for class_name, history in list(config.motion_history.items()):
         fresh = [entry for entry in history if (now - entry[2]) <= stale_after]
@@ -739,6 +778,7 @@ def detect_consumption_motion(config, detections: list[dict], frame_width: int, 
             config.motion_history.pop(class_name, None)
 
     for class_name, centers in class_centers.items():
+        # Multiple detections of the same class in one frame are collapsed to one average center.
         avg_x = sum(c[0] for c in centers) / len(centers)
         avg_y = sum(c[1] for c in centers) / len(centers)
         history = config.motion_history.get(class_name)
@@ -758,6 +798,8 @@ def detect_consumption_motion(config, detections: list[dict], frame_width: int, 
         upward_norm = max(0.0, (first_y - last_y) / max(1.0, float(frame_height)))
         displacement_score = displacement_norm / max(1e-6, config.motion_displacement_threshold)
         upward_score = upward_norm / max(1e-6, config.motion_upward_threshold)
+        # The score mixes overall movement with upward travel, which tends to match the
+        # "object being lifted toward a person" pattern better than displacement alone.
         class_scores[class_name] = 0.6 * displacement_score + 0.4 * upward_score
 
     max_score = 0.0
@@ -773,6 +815,7 @@ def detect_consumption_motion(config, detections: list[dict], frame_width: int, 
 
 
 def read_alerts(log_path: str | None) -> list[dict]:
+    """Read the persisted alert list; invalid or missing files degrade to an empty list."""
     if not log_path or not os.path.exists(log_path):
         return []
     try:
@@ -786,6 +829,7 @@ def read_alerts(log_path: str | None) -> list[dict]:
 
 
 def write_alerts(log_path: str | None, alerts: list[dict]) -> None:
+    """Persist the full alert list back to disk."""
     if not log_path:
         return
     with open(log_path, "w", encoding="utf-8") as handle:
@@ -793,6 +837,7 @@ def write_alerts(log_path: str | None, alerts: list[dict]) -> None:
 
 
 def ensure_alert_metadata(alerts: list[dict]) -> bool:
+    """Backfill IDs/status fields so old alert files still work with the current UI."""
     changed = False
     for alert in alerts:
         if not isinstance(alert, dict):
@@ -811,6 +856,7 @@ def ensure_alert_metadata(alerts: list[dict]) -> bool:
 
 
 def read_class_map(path: str) -> dict[str, int]:
+    """Load the class-name-to-index map used for accepted-sample training."""
     if not os.path.exists(path):
         return {}
     try:
@@ -831,11 +877,13 @@ def read_class_map(path: str) -> dict[str, int]:
 
 
 def write_class_map(path: str, class_map: dict[str, int]) -> None:
+    """Persist the training class map in a deterministic format."""
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(class_map, handle, indent=2, sort_keys=True)
 
 
 def update_dataset_yaml(config, class_map: dict[str, int]) -> None:
+    """Rewrite the YOLO dataset config so training reflects the current accepted classes."""
     os.makedirs(config.training_data_dir, exist_ok=True)
     os.makedirs(config.training_images_dir, exist_ok=True)
     os.makedirs(config.training_labels_dir, exist_ok=True)
@@ -855,6 +903,7 @@ def update_dataset_yaml(config, class_map: dict[str, int]) -> None:
 
 
 def export_accepted_alert_samples(alert: dict, config) -> int:
+    """Copy accepted snippets into a YOLO-style dataset and write matching label files."""
     if not isinstance(alert, dict):
         return 0
     detections = alert.get("detections")
@@ -898,6 +947,7 @@ def export_accepted_alert_samples(alert: dict, config) -> int:
 
 
 def training_status_snapshot(config) -> dict:
+    """Expose the last-known training state for the dashboard polling endpoint."""
     with config.training_lock:
         return {
             "running": bool(config.training_running),
@@ -910,6 +960,7 @@ def training_status_snapshot(config) -> dict:
 
 
 def _train_on_accepted_samples(config) -> None:
+    """Background worker that exports accepted data, trains, and hot-swaps the model."""
     with config.training_lock:
         config.training_last_started_at = datetime.now().isoformat(timespec="seconds")
         config.training_last_error = ""
@@ -924,6 +975,7 @@ def _train_on_accepted_samples(config) -> None:
                     exported_total += export_accepted_alert_samples(alert, config)
             if changed or exported_total > 0:
                 write_alerts(config.alert_log, alerts)
+        # Training only makes sense once at least one accepted snippet has been exported.
         image_files = [
             name
             for name in os.listdir(config.training_images_dir)
@@ -955,6 +1007,7 @@ def _train_on_accepted_samples(config) -> None:
         if best_path and YOLO is not None:
             new_model = YOLO(best_path)
             with config.model_lock:
+                # Replace the in-memory model so new detections use the freshly trained weights.
                 config.model = new_model
                 config.model_path = best_path
         with config.training_lock:
@@ -971,6 +1024,7 @@ def _train_on_accepted_samples(config) -> None:
 
 
 def start_training_job(config) -> bool:
+    """Start the background training worker unless one is already running."""
     with config.training_lock:
         if config.training_running:
             return False
@@ -982,6 +1036,7 @@ def start_training_job(config) -> bool:
 
 
 def append_alert(log_path: str | None, alert: dict) -> None:
+    """Append one alert while preserving compatibility metadata."""
     alerts = read_alerts(log_path)
     ensure_alert_metadata(alerts)
     alerts.append(alert)
@@ -989,12 +1044,14 @@ def append_alert(log_path: str | None, alert: dict) -> None:
 
 
 def _safe_token(value: str) -> str:
+    """Convert labels into safe filename fragments."""
     token = "".join(ch if ch.isalnum() else "_" for ch in value.strip().lower())
     token = token.strip("_")
     return token or "item"
 
 
 def add_detection_snippets(frame, detections: list[dict], snippet_dir: str | None, alert_id: str):
+    """Save one crop per detection and attach the generated filenames to the alert payload."""
     if not snippet_dir:
         return detections
     os.makedirs(snippet_dir, exist_ok=True)
@@ -1020,14 +1077,20 @@ def create_alert(
     frame,
     detections: list[dict],
     snippet_dir: str | None,
+    camera_zone: str,
     motion_detected: bool = False,
     motion_score: float = 0.0,
 ) -> dict:
+    """Build the alert record stored in JSON and rendered by the dashboard."""
     alert_id = uuid4().hex[:12]
+    zone = normalize_camera_zone(camera_zone)
+    for det in detections:
+        det["zone"] = zone
     return {
         "id": alert_id,
         "status": "new",
         "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "zone": zone,
         "frame_size": {"width": int(frame.shape[1]), "height": int(frame.shape[0])},
         "consumption_motion_detected": bool(motion_detected),
         "consumption_motion_score": round(float(motion_score), 3),
@@ -1036,6 +1099,7 @@ def create_alert(
 
 
 def detections_from_result(result, allowed_names: set[str] | None = None) -> list[dict]:
+    """Normalize Ultralytics results into the alert/dashboard detection schema."""
     detections: list[dict] = []
     if result.boxes is None or len(result.boxes) == 0:
         return detections
@@ -1061,6 +1125,7 @@ def detections_from_result(result, allowed_names: set[str] | None = None) -> lis
 
 
 def draw_detections(frame, detections):
+    """Overlay bounding boxes and labels onto a frame for streaming to the browser."""
     annotated = frame.copy()
     for det in detections:
         x1, y1, x2, y2 = (int(v) for v in det["bbox_xyxy"])
@@ -1081,6 +1146,7 @@ def draw_detections(frame, detections):
 
 
 def make_placeholder_svg(width: int, height: int, label: str) -> str:
+    """Build a lightweight placeholder image for test mode or missing camera states."""
     safe_label = label.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     return (
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
@@ -1095,11 +1161,13 @@ def make_placeholder_svg(width: int, height: int, label: str) -> str:
 
 
 def make_random_alerts(limit: int, frame_width: int, frame_height: int) -> list[dict]:
+    """Generate synthetic alerts so the UI can be exercised without a live camera."""
     alerts: list[dict] = []
     class_names = sorted(FOOD_CLASS_NAMES)
     for idx in range(max(1, limit)):
         det_count = random.randint(1, 3)
         detections = []
+        zone = random.choice(CAMERA_ZONES)
         for _ in range(det_count):
             class_name = random.choice(class_names)
             x1 = random.randint(0, max(0, frame_width - 60))
@@ -1113,6 +1181,7 @@ def make_random_alerts(limit: int, frame_width: int, frame_height: int) -> list[
                     "confidence": round(random.uniform(0.5, 0.99), 2),
                     "bbox_xyxy": [x1, y1, x2, y2],
                     "center_xy": [round((x1 + x2) / 2, 2), round((y1 + y2) / 2, 2)],
+                    "zone": zone,
                 }
             )
         alert_time = datetime.now() - timedelta(seconds=idx * 3)
@@ -1121,6 +1190,7 @@ def make_random_alerts(limit: int, frame_width: int, frame_height: int) -> list[
                 "id": uuid4().hex[:12],
                 "status": random.choice(["new", "accepted"]),
                 "timestamp": alert_time.isoformat(timespec="seconds"),
+                "zone": zone,
                 "frame_size": {"width": frame_width, "height": frame_height},
                 "detections": detections,
             }
@@ -1129,6 +1199,7 @@ def make_random_alerts(limit: int, frame_width: int, frame_height: int) -> list[
 
 
 def make_status_frame(width: int, height: int, label: str):
+    """Create a simple text frame shown when the real camera feed is unavailable/off."""
     if cv2 is None or np is None:
         return None
     safe_width = max(320, int(width or 640))
@@ -1147,6 +1218,7 @@ def make_status_frame(width: int, height: int, label: str):
 
 
 def parse_bool(value, field_name: str) -> bool:
+    """Accept a few JSON-friendly boolean representations from the settings API."""
     if isinstance(value, bool):
         return value
     if isinstance(value, (int, float)) and value in {0, 1}:
@@ -1160,7 +1232,18 @@ def parse_bool(value, field_name: str) -> bool:
     raise ValueError(f"Invalid boolean for '{field_name}'")
 
 
+def normalize_camera_zone(value, field_name: str = "camera_zone") -> str:
+    """Validate and normalize the configured camera zone label."""
+    zone = str(value).strip().upper()
+    if zone.startswith("ZONE "):
+        zone = zone[5:].strip()
+    if len(zone) == 1 and zone in "ABCDEFGHI":
+        return f"Zone {zone}"
+    raise ValueError(f"Invalid value for '{field_name}'. Expected Zone A through Zone I.")
+
+
 def clamp_float(value, field_name: str, minimum: float, maximum: float) -> float:
+    """Parse and bound a float setting so runtime updates stay within safe limits."""
     try:
         numeric = float(value)
     except (TypeError, ValueError):
@@ -1169,6 +1252,7 @@ def clamp_float(value, field_name: str, minimum: float, maximum: float) -> float
 
 
 def clamp_int(value, field_name: str, minimum: int, maximum: int) -> int:
+    """Parse and bound an integer setting so runtime updates stay within safe limits."""
     try:
         numeric = int(value)
     except (TypeError, ValueError):
@@ -1177,6 +1261,7 @@ def clamp_int(value, field_name: str, minimum: int, maximum: int) -> int:
 
 
 def settings_snapshot(config) -> dict:
+    """Return the live runtime settings exposed to the dashboard."""
     with config.settings_lock:
         return {
             "camera_enabled": bool(config.camera_enabled),
@@ -1189,12 +1274,14 @@ def settings_snapshot(config) -> dict:
             "stream_fps": float(config.stream_fps),
             "width": int(config.width),
             "height": int(config.height),
+            "camera_zone": str(config.camera_zone),
             "updated_at": config.settings_updated_at,
             "test_mode": bool(config.test_mode),
         }
 
 
 def default_settings_snapshot(config) -> dict:
+    """Return the original startup settings so the UI can restore defaults."""
     with config.settings_lock:
         defaults = dict(config.default_settings)
     defaults["test_mode"] = bool(config.test_mode)
@@ -1202,6 +1289,7 @@ def default_settings_snapshot(config) -> dict:
 
 
 def update_runtime_settings(config, payload: dict) -> dict:
+    """Apply validated settings updates atomically while the camera thread is running."""
     if not isinstance(payload, dict):
         raise ValueError("Settings payload must be a JSON object")
     with config.settings_lock:
@@ -1225,17 +1313,21 @@ def update_runtime_settings(config, payload: dict) -> dict:
             config.width = clamp_int(payload["width"], "width", 0, 3840)
         if "height" in payload:
             config.height = clamp_int(payload["height"], "height", 0, 2160)
+        if "camera_zone" in payload:
+            config.camera_zone = normalize_camera_zone(payload["camera_zone"])
         config.settings_updated_at = datetime.now().isoformat(timespec="seconds")
     return settings_snapshot(config)
 
 
 def reset_runtime_settings(config) -> dict:
+    """Reset mutable runtime settings back to their startup defaults."""
     defaults = default_settings_snapshot(config)
     defaults.pop("test_mode", None)
     return update_runtime_settings(config, defaults)
 
 
 class DashboardConfig:
+    """Shared mutable state for the HTTP handlers, camera loop, and training worker."""
     def __init__(
         self,
         model,
@@ -1249,6 +1341,7 @@ class DashboardConfig:
         persist_frames,
         cooldown,
         clear_frames,
+        camera_zone,
         snippet_dir,
         training_dir,
         train_epochs,
@@ -1270,6 +1363,7 @@ class DashboardConfig:
         self.persist_frames = persist_frames
         self.cooldown = cooldown
         self.clear_frames = clear_frames
+        self.camera_zone = normalize_camera_zone(camera_zone)
         self.camera_enabled = True
         self.detection_enabled = True
         self.settings_updated_at = datetime.now().isoformat(timespec="seconds")
@@ -1291,6 +1385,7 @@ class DashboardConfig:
             "stream_fps": float(stream_fps),
             "width": int(width),
             "height": int(height),
+            "camera_zone": self.camera_zone,
         }
         self.stop = False
         self.consecutive = 0
@@ -1323,6 +1418,7 @@ class DashboardConfig:
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
+    """Serve the dashboard page, JSON APIs, snippet images, and MJPEG stream."""
     server_version = "FoodDrinkDashboard/0.2"
 
     def do_GET(self):
@@ -1370,6 +1466,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def _send_json(self, payload: dict | list, status=HTTPStatus.OK):
+        """Send a JSON response with no-cache headers for live dashboard polling."""
         body = json.dumps(payload, indent=2).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -1379,6 +1476,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_html(self, html):
+        """Send the inline dashboard HTML page."""
         body = html.encode("utf-8")
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -1387,6 +1485,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _read_json_body(self):
+        """Read and parse a bounded JSON request body."""
         try:
             content_length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
@@ -1400,6 +1499,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise ValueError("Request body must be valid JSON") from None
 
     def _send_alerts(self, limit):
+        """Return recent alerts, using generated data in test mode."""
         config: DashboardConfig = self.server.config
         if config.test_mode:
             frame_width = config.width or 640
@@ -1416,6 +1516,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json(alerts, HTTPStatus.OK)
 
     def _manage_alert(self):
+        """Accept, reject, or delete an alert and persist the updated alert log."""
         config: DashboardConfig = self.server.config
         if config.test_mode:
             self.send_error(HTTPStatus.BAD_REQUEST, "Alert management disabled in --test mode")
@@ -1445,6 +1546,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if action in {"reject", "delete"}:
                 alerts.pop(target_index)
             else:
+                # Accepting an alert also exports its snippets into the training dataset.
                 exported_count = export_accepted_alert_samples(alerts[target_index], config)
                 alerts[target_index]["status"] = "accepted"
                 if exported_count > 0:
@@ -1459,10 +1561,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "action": action, "alert_id": alert_id}, HTTPStatus.OK)
 
     def _send_settings(self):
+        """Return the current runtime settings to the browser."""
         config: DashboardConfig = self.server.config
         self._send_json(settings_snapshot(config), HTTPStatus.OK)
 
     def _update_settings(self):
+        """Apply settings posted from the dashboard form."""
         config: DashboardConfig = self.server.config
         try:
             payload = self._read_json_body()
@@ -1473,15 +1577,18 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "settings": updated}, HTTPStatus.OK)
 
     def _reset_settings(self):
+        """Restore runtime settings to the startup defaults."""
         config: DashboardConfig = self.server.config
         updated = reset_runtime_settings(config)
         self._send_json({"ok": True, "settings": updated}, HTTPStatus.OK)
 
     def _send_train_status(self):
+        """Return the latest background-training status snapshot."""
         config: DashboardConfig = self.server.config
         self._send_json(training_status_snapshot(config), HTTPStatus.OK)
 
     def _trigger_train_accepted(self):
+        """Start training on accepted snippets if the environment supports it."""
         config: DashboardConfig = self.server.config
         if config.test_mode:
             self.send_error(HTTPStatus.BAD_REQUEST, "Training is disabled in --test mode")
@@ -1496,6 +1603,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json({"ok": True, "started": True}, HTTPStatus.ACCEPTED)
 
     def _send_snippet(self, encoded_name: str):
+        """Serve one saved detection crop after validating the requested filename."""
         config: DashboardConfig = self.server.config
         if not config.snippet_dir:
             self.send_error(HTTPStatus.NOT_FOUND, "Snippet storage is disabled")
@@ -1528,6 +1636,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _stream_mjpeg(self):
+        """Stream the latest annotated frame as multipart MJPEG for the browser <img> tag."""
         config: DashboardConfig = self.server.config
         if config.test_mode:
             width = config.width or 640
@@ -1576,12 +1685,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
 
 def camera_worker(config: DashboardConfig, cam_index: int):
+    """Capture frames, run detection, update the stream frame, and create alerts."""
     if cv2 is None:
         raise RuntimeError("OpenCV is required for live camera mode.")
     cap = None
 
     try:
         while not config.stop:
+            # Snapshot the tunable settings once per loop so the frame is processed consistently.
             with config.settings_lock:
                 camera_enabled = bool(config.camera_enabled)
                 detection_enabled = bool(config.detection_enabled)
@@ -1592,11 +1703,13 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 clear_frames = int(config.clear_frames)
                 out_width = int(config.width)
                 out_height = int(config.height)
+                camera_zone = str(config.camera_zone)
 
             if not camera_enabled:
                 if cap is not None:
                     cap.release()
                     cap = None
+                # Turning the camera off also resets the alert state machine.
                 config.consecutive = 0
                 config.clear_count = 0
                 config.armed = True
@@ -1638,6 +1751,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 with config.model_lock:
                     model = config.model
                     allowed_ids = get_allowed_class_ids(model, FOOD_CLASS_NAMES)
+                    # Keep compatibility with Ultralytics releases that differ on `classes`.
                     try:
                         results = model.predict(
                             frame,
@@ -1664,6 +1778,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
             else:
                 config.motion_history.clear()
 
+            # This debounce logic makes "item stays in view" produce one alert rather than many.
             if detection_enabled and detections:
                 config.consecutive += 1
                 config.clear_count = 0
@@ -1688,6 +1803,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     frame,
                     detections,
                     snippet_dir=config.snippet_dir,
+                    camera_zone=camera_zone,
                     motion_detected=motion_detected,
                     motion_score=motion_score,
                 )
@@ -1734,6 +1850,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
 
 
 def main():
+    """Start the camera worker and HTTP server that power the dashboard."""
     parser = argparse.ArgumentParser(description="Camera dashboard with live alerts")
     parser.add_argument("--test", action="store_true", help="Run with synthetic feed/alerts")
     parser.add_argument("--model", default="yolov8n.pt", help="Path to YOLO model weights")
@@ -1755,6 +1872,7 @@ def main():
     parser.add_argument("--train-imgsz", type=int, default=640, help="Image size for accepted-sample training")
     parser.add_argument("--width", type=int, default=0, help="Resize width (0 = original)")
     parser.add_argument("--height", type=int, default=0, help="Resize height (0 = original)")
+    parser.add_argument("--camera-zone", default="Zone A", help="Zone label assigned to this camera")
     parser.add_argument("--fps", type=int, default=10, help="Stream FPS")
     parser.add_argument("--conf", type=float, default=0.25, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.45, help="IoU threshold")
@@ -1822,6 +1940,7 @@ def main():
         persist_frames=args.persist_frames,
         cooldown=args.cooldown,
         clear_frames=args.clear_frames,
+        camera_zone=args.camera_zone,
         snippet_dir=args.snippet_dir or None,
         training_dir=args.training_dir,
         train_epochs=args.train_epochs,
