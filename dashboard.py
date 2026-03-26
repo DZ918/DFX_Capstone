@@ -2,6 +2,7 @@
 
 import argparse
 from collections import deque
+import csv
 import json
 import math
 import os
@@ -1233,6 +1234,81 @@ def write_alerts(log_path: str | None, alerts: list[dict]) -> None:
         json.dump(alerts, handle, indent=2)
 
 
+DETECTION_SUMMARY_HEADERS = (
+    "alert_id",
+    "timestamp",
+    "date",
+    "weekday",
+    "time",
+    "zone",
+    "category",
+    "confidence",
+    "status",
+    "consumption_motion_detected",
+    "consumption_motion_score",
+    "snippet_file",
+)
+
+
+def _split_alert_timestamp(value: str) -> tuple[str, str, str, str]:
+    """Normalize one alert timestamp into CSV-friendly date and time columns."""
+    raw = str(value or "").strip()
+    if not raw:
+        return "", "", "", ""
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return raw, "", "", ""
+    return (
+        parsed.isoformat(timespec="seconds"),
+        parsed.date().isoformat(),
+        parsed.strftime("%A"),
+        parsed.time().isoformat(timespec="seconds"),
+    )
+
+
+def append_detection_summary_csv(summary_path: str | None, alert: dict) -> None:
+    """Append one CSV row per detection when a new alert is created."""
+    if not summary_path or not isinstance(alert, dict):
+        return
+    detections = alert.get("detections")
+    if not isinstance(detections, list) or not detections:
+        return
+    summary_path = os.path.abspath(summary_path)
+    summary_dir = os.path.dirname(summary_path)
+    if summary_dir:
+        os.makedirs(summary_dir, exist_ok=True)
+    write_header = not os.path.exists(summary_path) or os.path.getsize(summary_path) == 0
+    timestamp, date_value, weekday, time_value = _split_alert_timestamp(alert.get("timestamp", ""))
+    rows: list[dict[str, str | float | bool]] = []
+    for det in detections:
+        if not isinstance(det, dict):
+            continue
+        rows.append(
+            {
+                "alert_id": str(alert.get("id", "")).strip(),
+                "timestamp": timestamp,
+                "date": date_value,
+                "weekday": weekday,
+                "time": time_value,
+                "zone": str(alert.get("zone", "")).strip(),
+                "category": str(det.get("class_name", "")).strip().lower(),
+                "confidence": round(float(det.get("confidence", 0.0)), 4),
+                "status": str(alert.get("status", "")).strip().lower() or "new",
+                "consumption_motion_detected": bool(alert.get("consumption_motion_detected", False)),
+                "consumption_motion_score": round(float(alert.get("consumption_motion_score", 0.0)), 3),
+                "snippet_file": str(det.get("snippet_file", "")).strip(),
+            }
+        )
+    if not rows:
+        return
+    with open(summary_path, "a", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=DETECTION_SUMMARY_HEADERS)
+        if write_header:
+            writer.writeheader()
+        writer.writerows(rows)
+
+
 def ensure_alert_metadata(alerts: list[dict]) -> bool:
     """Backfill IDs/status fields so old alert files still work with the current UI."""
     changed = False
@@ -1480,12 +1556,13 @@ def start_training_job(config) -> bool:
     return True
 
 
-def append_alert(log_path: str | None, alert: dict) -> None:
+def append_alert(log_path: str | None, alert: dict, summary_csv_path: str | None = None) -> None:
     """Append one alert while preserving compatibility metadata."""
     alerts = read_alerts(log_path)
     ensure_alert_metadata(alerts)
     alerts.append(alert)
     write_alerts(log_path, alerts)
+    append_detection_summary_csv(summary_csv_path, alert)
 
 
 def _safe_token(value: str) -> str:
@@ -1873,6 +1950,7 @@ class DashboardConfig:
         clear_frames,
         camera_zone,
         snippet_dir,
+        detection_summary_csv,
         inference_imgsz,
         max_inference_fps,
         jpeg_quality,
@@ -1903,6 +1981,9 @@ class DashboardConfig:
         self.detection_enabled = True
         self.settings_updated_at = datetime.now().isoformat(timespec="seconds")
         self.snippet_dir = snippet_dir
+        self.detection_summary_csv = (
+            os.path.abspath(detection_summary_csv) if detection_summary_csv else None
+        )
         self.latest_frame = None
         self.latest_jpeg = None
         self.frame_lock = threading.Lock()
@@ -2438,7 +2519,11 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     motion_score=motion_score,
                 )
                 with config.alert_lock:
-                    append_alert(config.alert_log, alert)
+                    append_alert(
+                        config.alert_log,
+                        alert,
+                        summary_csv_path=config.detection_summary_csv,
+                    )
                 config.last_alert_ts = now
                 config.armed = False
 
@@ -2499,6 +2584,11 @@ def main():
     parser.add_argument("--host", default="0.0.0.0", help="Host interface")
     parser.add_argument("--port", type=int, default=8000, help="Port")
     parser.add_argument("--alert-log", default="alerts.json", help="Alert JSON path")
+    parser.add_argument(
+        "--detection-summary-csv",
+        default="detections_summary.csv",
+        help="CSV file where one row per new detection is appended",
+    )
     parser.add_argument(
         "--snippet-dir",
         default="snippets",
@@ -2609,6 +2699,7 @@ def main():
         clear_frames=args.clear_frames,
         camera_zone=args.camera_zone,
         snippet_dir=args.snippet_dir or None,
+        detection_summary_csv=args.detection_summary_csv or None,
         inference_imgsz=args.inference_imgsz,
         max_inference_fps=args.max_inference_fps,
         jpeg_quality=args.jpeg_quality,
