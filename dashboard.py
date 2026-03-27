@@ -167,6 +167,18 @@ HTML_PAGE = """<!doctype html>
       .det-card img.expandable { cursor: zoom-in; }
       .det-empty { width: 100%; height: 82px; background: #e5e7eb; display: flex; align-items: center; justify-content: center; color: #4b5563; font-size: 11px; }
       .det-label { font-size: 12px; padding: 6px; color: #1f2937; }
+            .alert-video-wrap {
+                margin: 8px 0 10px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                overflow: hidden;
+                background: #111827;
+            }
+            .alert-video {
+                width: 100%;
+                display: block;
+                background: #000;
+            }
       .actions { display: flex; gap: 8px; }
       .actions button {
         border: 0;
@@ -837,7 +849,7 @@ HTML_PAGE = """<!doctype html>
           const detectionKey = detections
             .map((det) => `${det.class_name || ''}:${det.confidence || ''}:${det.snippet_file || ''}:${det.zone || ''}`)
             .join('|');
-          return `${alert.id || ''}:${alert.status || ''}:${alert.timestamp || ''}:${alert.zone || ''}:${detectionKey}`;
+                    return `${alert.id || ''}:${alert.status || ''}:${alert.timestamp || ''}:${alert.zone || ''}:${alert.video_file || ''}:${detectionKey}`;
         }).join('||');
       }
 
@@ -858,16 +870,32 @@ HTML_PAGE = """<!doctype html>
         const controls = alert.id
           ? `<div class=\"actions\">${actionBtn}${isAccepted ? '' : '<button class=\"reject\" data-action=\"reject\">Reject</button>'}</div>`
           : '';
-        const motionTag = alert.consumption_motion_detected
-          ? ` | consumption motion (${Number(alert.consumption_motion_score || 0).toFixed(2)})`
-          : '';
+                const motionTag = alert.consumption_motion_detected
+                    ? ` | hand-to-mouth (${Number(alert.consumption_motion_score || 0).toFixed(2)})`
+                    : '';
+                const motionSource = alert.hand_to_mouth_source
+                    ? ` | source: ${String(alert.hand_to_mouth_source).replaceAll('_', ' ')}`
+                    : '';
+                const motionEvents = alert.hand_to_mouth_event_count
+                    ? ` | events/30s: ${Number(alert.hand_to_mouth_event_count || 0)}`
+                    : '';
         const zoneTag = zone ? ` | ${zone}` : '';
+                                const video = alert.video_file
+                                        ? `<div class=\"alert-video-wrap\">` +
+                                            `<video class=\"alert-video\" controls preload=\"metadata\" playsinline>` +
+                                            `<source src=\"/videos/${encodeURIComponent(alert.video_file)}\" type=\"${escapeHtml(alert.video_mime || 'video/mp4')}\" />` +
+                                            `Your browser cannot play this recording.` +
+                                            `</video>` +
+                                            `<div class=\"det-label\"><a href=\"/videos/${encodeURIComponent(alert.video_file)}\" target=\"_blank\" rel=\"noopener\">Open/download recording</a></div>` +
+                                            `</div>`
+                                        : '';
         const item = document.createElement('article');
         item.className = 'alert';
         item.innerHTML =
           `<div class=\"alert-head\"><span class=\"badge ${badgeClass}\">${escapeHtml(status)}</span>` +
           `<span>${escapeHtml(alert.timestamp || 'unknown time')}</span></div>` +
-          `<div class=\"meta\">${detections.length} detection(s)${escapeHtml(zoneTag + motionTag)}</div>` +
+                    `<div class=\"meta\">${detections.length} detection(s)${escapeHtml(zoneTag + motionTag + motionSource + motionEvents)}</div>` +
+                    video +
           `<div class=\"det-grid\">${detections.map(renderDetection).join('')}</div>` +
           controls;
         item.querySelectorAll('button[data-action]').forEach(btn => {
@@ -1074,9 +1102,31 @@ HANDHELD_FOOD_CLASS_NAMES = {
     "sandwich",
 }
 MOTION_TRIGGER_SCORE = 0.85
+FOOD_MOTION_MIN_SCORE = 1.0
+FOOD_MOTION_CONFIRM_FRAMES = 3
 STATIONARY_FOLLOWUP_SECONDS = 30 * 60
 HAND_TO_MOUTH_WINDOW_SECONDS = 30.0
 HAND_TO_MOUTH_REQUIRED_EVENTS = 3
+FOOD_OCCLUSION_LOOKBACK_SECONDS = 2.0
+OCCLUDED_MOTION_HOLD_SECONDS = 1.2
+OCCLUDED_MOTION_PROXY_SCORE = 0.86
+PERSON_PROXY_MIN_AREA_RATIO = 0.02
+PERSON_PROXY_DIFF_THRESHOLD = 24
+PERSON_PROXY_MOUTH_MOTION_RATIO = 0.05
+PERSON_PROXY_MIN_MOUTH_RATIO = 0.04
+PERSON_PROXY_HOLD_SECONDS = 0.8
+PERSON_PROXY_SCORE_FLOOR = 0.86
+PERSON_PROXY_APPROACH_MOTION_RATIO = 0.035
+PERSON_PROXY_MIN_APPROACH_RATIO = 0.028
+PERSON_PROXY_TRIGGER_SCORE = 1.1
+PERSON_PROXY_CONFIRM_FRAMES = 3
+PERSON_PROXY_MIN_CONFIDENCE = 0.25
+ALERT_DETECTION_CONFIDENCE_FLOOR = 0.62
+ALERT_SNIPPET_CONFIDENCE_FLOOR = 0.64
+TRAIN_VIDEO_SAMPLE_MAX_FRAMES = 12
+SAME_PERSON_ALERT_WINDOW_SECONDS = 120.0
+SAME_PERSON_MAX_ALERTS_IN_WINDOW = 3
+SAME_PERSON_SUPPRESSION_DISTANCE_RATIO = 0.18
 
 CAMERA_ZONES = tuple(f"Zone {chr(ord('A') + idx)}" for idx in range(9))
 
@@ -1386,6 +1436,126 @@ def detect_consumption_motion(
     return max_score >= MOTION_TRIGGER_SCORE, round(max_score, 3)
 
 
+def detect_person_hand_to_mouth_proxy(
+    config,
+    frame,
+    person_detections: list[dict],
+    now_ts: float,
+) -> tuple[bool, float]:
+    """Fallback hand-to-mouth motion signal from person-only upper-face ROI movement."""
+    if cv2 is None or np is None:
+        return False, 0.0
+    if not person_detections:
+        history = getattr(config, "person_proxy_score_history", None)
+        if history is not None:
+            history.append(0.0)
+        config.person_proxy_trigger_streak = 0
+        return (now_ts <= float(getattr(config, "person_proxy_active_until", 0.0))), 0.0
+
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    frame_h, frame_w = gray.shape[:2]
+    frame_area = max(1.0, float(frame_h * frame_w))
+    downsample = 0.5
+    small = cv2.resize(
+        gray,
+        (max(1, int(frame_w * downsample)), max(1, int(frame_h * downsample))),
+        interpolation=cv2.INTER_AREA,
+    )
+    prev_small = getattr(config, "person_proxy_prev_gray", None)
+    config.person_proxy_prev_gray = small
+    if prev_small is None or getattr(prev_small, "shape", None) != small.shape:
+        config.person_proxy_trigger_streak = 0
+        return (now_ts <= float(getattr(config, "person_proxy_active_until", 0.0))), 0.0
+
+    diff = cv2.absdiff(small, prev_small)
+    _, motion_mask = cv2.threshold(diff, PERSON_PROXY_DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
+
+    best_mouth_ratio = 0.0
+    best_approach_ratio = 0.0
+    best_raw_score = 0.0
+    scale_x = float(small.shape[1]) / max(1.0, float(frame_w))
+    scale_y = float(small.shape[0]) / max(1.0, float(frame_h))
+    for det in person_detections:
+        try:
+            person_confidence = float(det.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            person_confidence = 0.0
+        if person_confidence < PERSON_PROXY_MIN_CONFIDENCE:
+            continue
+        bbox = det.get("bbox_xyxy")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            x1, y1, x2, y2 = (float(v) for v in bbox)
+        except (TypeError, ValueError):
+            continue
+        person_w = max(1.0, x2 - x1)
+        person_h = max(1.0, y2 - y1)
+        if (person_w * person_h) / frame_area < PERSON_PROXY_MIN_AREA_RATIO:
+            continue
+
+        # Focus on mouth/hand interaction area in upper-middle of the person box.
+        roi_x1 = x1 + (person_w * 0.24)
+        roi_x2 = x1 + (person_w * 0.76)
+        roi_y1 = y1 + (person_h * 0.08)
+        roi_y2 = y1 + (person_h * 0.48)
+
+        sx1 = max(0, min(motion_mask.shape[1] - 1, int(roi_x1 * scale_x)))
+        sy1 = max(0, min(motion_mask.shape[0] - 1, int(roi_y1 * scale_y)))
+        sx2 = max(sx1 + 1, min(motion_mask.shape[1], int(roi_x2 * scale_x)))
+        sy2 = max(sy1 + 1, min(motion_mask.shape[0], int(roi_y2 * scale_y)))
+        roi = motion_mask[sy1:sy2, sx1:sx2]
+        if roi.size == 0:
+            continue
+        mouth_ratio = float(cv2.countNonZero(roi)) / float(roi.size)
+
+        approach_x1 = x1 + (person_w * 0.18)
+        approach_x2 = x1 + (person_w * 0.82)
+        approach_y1 = y1 + (person_h * 0.22)
+        approach_y2 = y1 + (person_h * 0.78)
+        ax1 = max(0, min(motion_mask.shape[1] - 1, int(approach_x1 * scale_x)))
+        ay1 = max(0, min(motion_mask.shape[0] - 1, int(approach_y1 * scale_y)))
+        ax2 = max(ax1 + 1, min(motion_mask.shape[1], int(approach_x2 * scale_x)))
+        ay2 = max(ay1 + 1, min(motion_mask.shape[0], int(approach_y2 * scale_y)))
+        approach_roi = motion_mask[ay1:ay2, ax1:ax2]
+        approach_ratio = 0.0
+        if approach_roi.size > 0:
+            approach_ratio = float(cv2.countNonZero(approach_roi)) / float(approach_roi.size)
+
+        mouth_score = mouth_ratio / max(1e-6, PERSON_PROXY_MOUTH_MOTION_RATIO)
+        approach_score = approach_ratio / max(1e-6, PERSON_PROXY_APPROACH_MOTION_RATIO)
+        raw_score = (0.72 * mouth_score) + (0.28 * approach_score)
+        if raw_score > best_raw_score:
+            best_raw_score = raw_score
+            best_mouth_ratio = mouth_ratio
+            best_approach_ratio = approach_ratio
+
+    score_history = getattr(config, "person_proxy_score_history", None)
+    if score_history is not None:
+        score_history.append(best_raw_score)
+        smoothed_score = sum(score_history) / max(1, len(score_history))
+    else:
+        smoothed_score = best_raw_score
+
+    candidate_trigger = (
+        smoothed_score >= PERSON_PROXY_TRIGGER_SCORE
+        and best_mouth_ratio >= PERSON_PROXY_MIN_MOUTH_RATIO
+        and best_approach_ratio >= PERSON_PROXY_MIN_APPROACH_RATIO
+    )
+    if candidate_trigger:
+        config.person_proxy_trigger_streak = int(getattr(config, "person_proxy_trigger_streak", 0)) + 1
+    else:
+        config.person_proxy_trigger_streak = max(0, int(getattr(config, "person_proxy_trigger_streak", 0)) - 1)
+    triggered = int(getattr(config, "person_proxy_trigger_streak", 0)) >= PERSON_PROXY_CONFIRM_FRAMES
+    if triggered:
+        config.person_proxy_active_until = now_ts + PERSON_PROXY_HOLD_SECONDS
+    active = now_ts <= float(getattr(config, "person_proxy_active_until", 0.0))
+    score = min(1.5, max(0.0, smoothed_score))
+    if active:
+        score = max(score, PERSON_PROXY_SCORE_FLOOR)
+    return active, round(score, 3)
+
+
 def read_alerts(log_path: str | None) -> list[dict]:
     """Read the persisted alert list; invalid or missing files degrade to an empty list."""
     if not log_path or not os.path.exists(log_path):
@@ -1625,6 +1795,198 @@ def update_dataset_yaml(config, class_map: dict[str, int]) -> None:
         handle.write("\n".join(yaml_lines) + "\n")
 
 
+def _normalized_xywh_from_xyxy(
+    bbox_xyxy: list[float],
+    source_width: float,
+    source_height: float,
+    target_width: float,
+    target_height: float,
+) -> tuple[float, float, float, float] | None:
+    """Project an XYXY box between frame sizes and return YOLO-normalized XYWH."""
+    if source_width <= 1 or source_height <= 1 or target_width <= 1 or target_height <= 1:
+        return None
+    x1, y1, x2, y2 = (float(v) for v in bbox_xyxy)
+    scale_x = target_width / source_width
+    scale_y = target_height / source_height
+    x1 *= scale_x
+    x2 *= scale_x
+    y1 *= scale_y
+    y2 *= scale_y
+    x1 = max(0.0, min(target_width - 1.0, x1))
+    x2 = max(0.0, min(target_width, x2))
+    y1 = max(0.0, min(target_height - 1.0, y1))
+    y2 = max(0.0, min(target_height, y2))
+    if x2 <= x1 or y2 <= y1:
+        return None
+    cx = ((x1 + x2) * 0.5) / target_width
+    cy = ((y1 + y2) * 0.5) / target_height
+    bw = (x2 - x1) / target_width
+    bh = (y2 - y1) / target_height
+    return (
+        max(0.0, min(1.0, cx)),
+        max(0.0, min(1.0, cy)),
+        max(0.0, min(1.0, bw)),
+        max(0.0, min(1.0, bh)),
+    )
+
+
+def export_video_frames_for_training(alert: dict, config, class_map: dict[str, int]) -> int:
+    """Extract labeled frames from one alert video so training can learn from motion clips."""
+    if cv2 is None:
+        return 0
+    if not isinstance(alert, dict):
+        return 0
+    if alert.get("training_video_exported"):
+        return 0
+    video_file = str(alert.get("video_file", "")).strip()
+    detections = alert.get("detections")
+    frame_size = alert.get("frame_size")
+    if not video_file or not isinstance(detections, list):
+        return 0
+    if not isinstance(frame_size, dict):
+        return 0
+    source_width = float(frame_size.get("width", 0) or 0)
+    source_height = float(frame_size.get("height", 0) or 0)
+    if source_width <= 1 or source_height <= 1:
+        return 0
+    if not config.video_dir:
+        return 0
+    video_path = os.path.join(config.video_dir, video_file)
+    if not os.path.exists(video_path):
+        return 0
+
+    usable_detections: list[tuple[int, list[float], str]] = []
+    for det in detections:
+        if not isinstance(det, dict):
+            continue
+        class_name = str(det.get("class_name", "")).strip().lower()
+        bbox_xyxy = det.get("bbox_xyxy")
+        if (
+            not class_name
+            or not isinstance(bbox_xyxy, (list, tuple))
+            or len(bbox_xyxy) != 4
+        ):
+            continue
+        if class_name not in class_map:
+            class_map[class_name] = len(class_map)
+        usable_detections.append((class_map[class_name], [float(v) for v in bbox_xyxy], class_name))
+    if not usable_detections:
+        return 0
+
+    capture = cv2.VideoCapture(video_path)
+    if not capture or not capture.isOpened():
+        return 0
+    exported = 0
+    try:
+        total_frames = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+        if total_frames <= 0:
+            total_frames = TRAIN_VIDEO_SAMPLE_MAX_FRAMES
+        sample_count = max(1, min(TRAIN_VIDEO_SAMPLE_MAX_FRAMES, total_frames))
+        if sample_count == 1:
+            frame_indices = [0]
+        else:
+            frame_indices = sorted({
+                int(round(i * (max(0, total_frames - 1) / float(sample_count - 1))))
+                for i in range(sample_count)
+            })
+
+        alert_id = str(alert.get("id", "alert")).strip() or "alert"
+        for sample_idx, frame_index in enumerate(frame_indices):
+            capture.set(cv2.CAP_PROP_POS_FRAMES, frame_index)
+            ok, frame = capture.read()
+            if not ok or frame is None or not hasattr(frame, "shape"):
+                continue
+            frame_h, frame_w = int(frame.shape[0]), int(frame.shape[1])
+            if frame_w <= 1 or frame_h <= 1:
+                continue
+
+            stem = f"{alert_id}_video_{sample_idx:02d}"
+            image_name = f"{stem}.jpg"
+            image_path = os.path.join(config.training_images_dir, image_name)
+            label_path = os.path.join(config.training_labels_dir, f"{stem}.txt")
+            if not cv2.imwrite(image_path, frame):
+                continue
+
+            label_lines: list[str] = []
+            for class_id, bbox_xyxy, _class_name in usable_detections:
+                normalized = _normalized_xywh_from_xyxy(
+                    bbox_xyxy,
+                    source_width=source_width,
+                    source_height=source_height,
+                    target_width=float(frame_w),
+                    target_height=float(frame_h),
+                )
+                if normalized is None:
+                    continue
+                cx, cy, bw, bh = normalized
+                label_lines.append(f"{class_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+            if not label_lines:
+                try:
+                    os.remove(image_path)
+                except OSError:
+                    pass
+                continue
+            with open(label_path, "w", encoding="utf-8") as label_handle:
+                label_handle.write("\n".join(label_lines) + "\n")
+            exported += 1
+    finally:
+        capture.release()
+
+    if exported > 0:
+        alert["training_video_exported"] = True
+        alert["training_video_samples"] = int(exported)
+    return exported
+
+
+def select_alert_person_center(person_detections: list[dict], detections: list[dict]) -> tuple[float, float] | None:
+    """Choose one representative person center for duplicate-alert suppression."""
+    if not person_detections:
+        return None
+    target_center = None
+    if detections:
+        sum_x = 0.0
+        sum_y = 0.0
+        count = 0
+        for det in detections:
+            center = det.get("center_xy") if isinstance(det, dict) else None
+            if not isinstance(center, (list, tuple)) or len(center) != 2:
+                continue
+            try:
+                cx = float(center[0])
+                cy = float(center[1])
+            except (TypeError, ValueError):
+                continue
+            sum_x += cx
+            sum_y += cy
+            count += 1
+        if count > 0:
+            target_center = (sum_x / count, sum_y / count)
+
+    best = None
+    best_score = float("-inf")
+    for det in person_detections:
+        if not isinstance(det, dict):
+            continue
+        bbox = det.get("bbox_xyxy")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            x1, y1, x2, y2 = (float(v) for v in bbox)
+            confidence = float(det.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            continue
+        center_x = (x1 + x2) * 0.5
+        center_y = (y1 + y2) * 0.5
+        if target_center is None:
+            score = confidence
+        else:
+            score = (confidence * 2.0) - math.hypot(center_x - target_center[0], center_y - target_center[1])
+        if score > best_score:
+            best_score = score
+            best = (center_x, center_y)
+    return best
+
+
 def export_accepted_alert_samples(alert: dict, config) -> int:
     """Copy accepted snippets into a YOLO-style dataset and write matching label files."""
     if not isinstance(alert, dict):
@@ -1671,6 +2033,7 @@ def export_accepted_alert_samples(alert: dict, config) -> int:
         det["training_exported"] = True
         det["training_sample"] = os.path.basename(dest_image)
         accepted += 1
+    accepted += export_video_frames_for_training(alert, config, class_map)
     write_class_map(config.class_map_path, class_map)
     update_dataset_yaml(config, class_map)
     return accepted
@@ -1878,6 +2241,12 @@ def add_detection_snippets(
     height, width = frame.shape[:2]
     context_detections = context_detections or detections
     for idx, det in enumerate(detections):
+        try:
+            det_confidence = float(det.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            det_confidence = 0.0
+        if det_confidence < ALERT_SNIPPET_CONFIDENCE_FLOOR:
+            continue
         bbox = det.get("bbox_xyxy")
         if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
             continue
@@ -1950,14 +2319,77 @@ def add_detection_snippets(
     return detections
 
 
+def add_alert_video(
+    recent_frames: list,
+    video_dir: str | None,
+    alert_id: str,
+    fps: float,
+) -> tuple[str, str] | None:
+    """Persist a short alert clip captured around the trigger moment."""
+    if cv2 is None:
+        return None
+    if not video_dir or not recent_frames:
+        return None
+    os.makedirs(video_dir, exist_ok=True)
+
+    first = recent_frames[0]
+    if first is None or not hasattr(first, "shape") or len(first.shape) < 2:
+        return None
+    height, width = int(first.shape[0]), int(first.shape[1])
+    if width <= 0 or height <= 0:
+        return None
+    safe_fps = max(3.0, float(fps or 8.0))
+
+    codec_candidates = [
+        ("avc1", "mp4", "video/mp4"),
+        ("H264", "mp4", "video/mp4"),
+        ("X264", "mp4", "video/mp4"),
+        ("VP90", "webm", "video/webm"),
+        ("VP80", "webm", "video/webm"),
+        ("mp4v", "mp4", "video/mp4"),
+        ("MJPG", "avi", "video/x-msvideo"),
+        ("XVID", "avi", "video/x-msvideo"),
+    ]
+    for codec, extension, mime in codec_candidates:
+        output_name = f"{alert_id}.{extension}"
+        output_path = os.path.join(video_dir, output_name)
+        writer = cv2.VideoWriter(
+            output_path,
+            cv2.VideoWriter_fourcc(*codec),
+            safe_fps,
+            (width, height),
+        )
+        if not writer or not writer.isOpened():
+            continue
+        try:
+            for frame in recent_frames:
+                if frame is None or not hasattr(frame, "shape") or len(frame.shape) < 2:
+                    continue
+                frame_h, frame_w = int(frame.shape[0]), int(frame.shape[1])
+                if frame_h != height or frame_w != width:
+                    frame = cv2.resize(frame, (width, height))
+                writer.write(frame)
+        finally:
+            writer.release()
+        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+            return output_name, mime
+    return None
+
+
 def create_alert(
     frame,
     detections: list[dict],
     snippet_dir: str | None,
+    video_dir: str | None,
+    recent_frames: list | None,
+    video_fps: float,
     camera_zone: str,
     context_detections: list[dict] | None = None,
     motion_detected: bool = False,
     motion_score: float = 0.0,
+    hand_to_mouth_source: str = "none",
+    hand_to_mouth_event_count: int = 0,
+    attach_video: bool = False,
     alert_reason: str = "standard",
 ) -> dict:
     """Build the alert record stored in JSON and rendered by the dashboard."""
@@ -1965,6 +2397,17 @@ def create_alert(
     zone = normalize_camera_zone(camera_zone)
     for det in detections:
         det["zone"] = zone
+    video_file = None
+    video_mime = ""
+    if motion_detected and attach_video:
+        video_result = add_alert_video(
+            recent_frames=recent_frames or [],
+            video_dir=video_dir,
+            alert_id=alert_id,
+            fps=video_fps,
+        )
+        if video_result is not None:
+            video_file, video_mime = video_result
     return {
         "id": alert_id,
         "status": "new",
@@ -1974,6 +2417,10 @@ def create_alert(
         "frame_size": {"width": int(frame.shape[1]), "height": int(frame.shape[0])},
         "consumption_motion_detected": bool(motion_detected),
         "consumption_motion_score": round(float(motion_score), 3),
+        "hand_to_mouth_source": str(hand_to_mouth_source or "none"),
+        "hand_to_mouth_event_count": int(max(0, hand_to_mouth_event_count)),
+        "video_file": video_file,
+        "video_mime": video_mime,
         "detections": add_detection_snippets(
             frame,
             detections,
@@ -2345,6 +2792,9 @@ class DashboardConfig:
         self.detection_enabled = True
         self.settings_updated_at = datetime.now().isoformat(timespec="seconds")
         self.snippet_dir = snippet_dir
+        self.video_dir = (
+            os.path.join(os.path.abspath(snippet_dir), "videos") if snippet_dir else None
+        )
         self.detection_summary_csv = (
             os.path.abspath(detection_summary_csv) if detection_summary_csv else None
         )
@@ -2383,6 +2833,14 @@ class DashboardConfig:
         self.stationary_followup_sent = False
         self.motion_event_times: deque[float] = deque()
         self.last_motion_active = False
+        self.last_food_seen_ts = 0.0
+        self.occlusion_motion_until = 0.0
+        self.person_proxy_prev_gray = None
+        self.person_proxy_active_until = 0.0
+        self.person_proxy_score_history: deque[float] = deque(maxlen=6)
+        self.person_proxy_trigger_streak = 0
+        self.food_motion_confirm_streak = 0
+        self.person_alert_history: deque[tuple[float, float, float]] = deque(maxlen=300)
         self.test_mode = test_mode
         self.training_dir = os.path.abspath(training_dir)
         self.training_data_dir = os.path.join(self.training_dir, "dataset")
@@ -2445,6 +2903,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path.startswith("/snippets/"):
             self._send_snippet(parsed.path.removeprefix("/snippets/"))
+            return
+        if parsed.path.startswith("/videos/"):
+            self._send_video(parsed.path.removeprefix("/videos/"))
             return
         if parsed.path == "/stream":
             self._stream_mjpeg()
@@ -2659,6 +3120,79 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_video(self, encoded_name: str):
+        """Serve one saved alert video clip after validating the filename."""
+        config: DashboardConfig = self.server.config
+        if not config.video_dir:
+            self.send_error(HTTPStatus.NOT_FOUND, "Video storage is disabled")
+            return
+        requested_name = unquote(encoded_name)
+        if requested_name != os.path.basename(requested_name):
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid video path")
+            return
+        video_root = os.path.abspath(config.video_dir)
+        video_path = os.path.abspath(os.path.join(video_root, requested_name))
+        if not video_path.startswith(f"{video_root}{os.sep}"):
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid video path")
+            return
+        if not os.path.exists(video_path):
+            self.send_error(HTTPStatus.NOT_FOUND, "Video not found")
+            return
+        content_type = "video/mp4"
+        lower = video_path.lower()
+        if lower.endswith(".avi"):
+            content_type = "video/x-msvideo"
+        elif lower.endswith(".webm"):
+            content_type = "video/webm"
+        file_size = os.path.getsize(video_path)
+        range_header = self.headers.get("Range", "").strip()
+        if not range_header.startswith("bytes="):
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Length", str(file_size))
+            self.end_headers()
+            with open(video_path, "rb") as handle:
+                self.wfile.write(handle.read())
+            return
+
+        range_spec = range_header[6:]
+        start_text, _, end_text = range_spec.partition("-")
+        try:
+            if start_text:
+                start = int(start_text)
+            else:
+                suffix_len = int(end_text)
+                start = max(0, file_size - suffix_len)
+            end = int(end_text) if end_text else (file_size - 1)
+        except ValueError:
+            self.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Invalid range")
+            return
+        if start < 0 or end < start or start >= file_size:
+            self.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Invalid range")
+            return
+        end = min(end, file_size - 1)
+        length = (end - start) + 1
+
+        self.send_response(HTTPStatus.PARTIAL_CONTENT)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Content-Range", f"bytes {start}-{end}/{file_size}")
+        self.send_header("Content-Length", str(length))
+        self.end_headers()
+        with open(video_path, "rb") as handle:
+            handle.seek(start)
+            remaining = length
+            chunk_size = 64 * 1024
+            while remaining > 0:
+                chunk = handle.read(min(chunk_size, remaining))
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+                remaining -= len(chunk)
+
     def _stream_mjpeg(self):
         """Stream the latest annotated frame as multipart MJPEG for the browser <img> tag."""
         config: DashboardConfig = self.server.config
@@ -2715,6 +3249,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
     last_motion_score = 0.0
     next_inference_at = 0.0
     allowed_ids = None
+    recent_frames: deque = deque(maxlen=80)
 
     try:
         while not config.stop:
@@ -2751,11 +3286,19 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.stationary_followup_sent = False
                 config.motion_event_times.clear()
                 config.last_motion_active = False
+                config.last_food_seen_ts = 0.0
+                config.occlusion_motion_until = 0.0
+                config.person_proxy_prev_gray = None
+                config.person_proxy_active_until = 0.0
+                config.person_proxy_trigger_streak = 0
+                config.food_motion_confirm_streak = 0
+                config.person_alert_history.clear()
                 config.motion_tracks.clear()
                 config.next_motion_track_id = 1
                 last_detections = []
                 last_motion_detected = False
                 last_motion_score = 0.0
+                recent_frames.clear()
                 paused = make_status_frame(out_width or 640, out_height or 360, "Camera is OFF")
                 if paused is not None:
                     ok, encoded = cv2.imencode(".jpg", paused, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
@@ -2799,28 +3342,33 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 allowed_ids = None
                 next_inference_at = 0.0
 
-            now = time.time()
+            wall_now = time.time()
 
             ok, frame = cap.read()
             if not ok:
                 cap.release()
                 cap = None
                 allowed_ids = None
+                recent_frames.clear()
                 time.sleep(0.1)
                 continue
+
+            recent_frames.append(frame.copy())
 
             detections = last_detections
             motion_detected = last_motion_detected
             motion_score = last_motion_score
+            motion_source = "none"
             inference_ran = False
             all_detections = detections
+            person_detections: list[dict] = []
             if detection_enabled:
-                now = time.perf_counter()
-                inference_due = max_inference_fps <= 0.0 or now >= next_inference_at
+                perf_now = time.perf_counter()
+                inference_due = max_inference_fps <= 0.0 or perf_now >= next_inference_at
                 if inference_due:
                     inference_ran = True
                     if max_inference_fps > 0.0:
-                        next_inference_at = now + (1.0 / max(0.1, max_inference_fps))
+                        next_inference_at = perf_now + (1.0 / max(0.1, max_inference_fps))
                     else:
                         next_inference_at = 0.0
                 with config.model_lock:
@@ -2847,7 +3395,10 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     detections = [
                         det
                         for det in all_detections
-                        if str(det.get("class_name", "")).strip().lower() in FOOD_CLASS_NAMES
+                        if (
+                            str(det.get("class_name", "")).strip().lower() in FOOD_CLASS_NAMES
+                            and float(det.get("confidence", 0.0)) >= ALERT_DETECTION_CONFIDENCE_FLOOR
+                        )
                     ]
                     person_detections = [
                         det
@@ -2855,24 +3406,65 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         if str(det.get("class_name", "")).strip().lower() == "person"
                     ]
                     if motion_enabled:
-                        motion_detected, motion_score = detect_consumption_motion(
+                        raw_motion_detected, raw_motion_score = detect_consumption_motion(
                             config,
                             detections,
                             frame_width=int(frame.shape[1]),
                             frame_height=int(frame.shape[0]),
                             person_detections=person_detections,
                         )
+                        if raw_motion_detected and raw_motion_score >= FOOD_MOTION_MIN_SCORE:
+                            config.food_motion_confirm_streak = min(
+                                FOOD_MOTION_CONFIRM_FRAMES + 2,
+                                int(getattr(config, "food_motion_confirm_streak", 0)) + 1,
+                            )
+                        else:
+                            config.food_motion_confirm_streak = 0
+                        motion_detected = int(getattr(config, "food_motion_confirm_streak", 0)) >= FOOD_MOTION_CONFIRM_FRAMES
+                        motion_score = float(raw_motion_score)
+                        if motion_detected:
+                            motion_source = "food_track"
+                        person_proxy_detected, person_proxy_score = detect_person_hand_to_mouth_proxy(
+                            config,
+                            frame,
+                            person_detections,
+                            wall_now,
+                        )
+                        if not motion_detected and not detections and person_proxy_detected:
+                            # Allow alerting on pure hand-to-mouth gesture only when no food object is visible.
+                            motion_detected = True
+                            motion_score = max(float(motion_score), float(person_proxy_score))
+                            motion_source = "person_proxy"
+                        if detections:
+                            config.last_food_seen_ts = wall_now
+                        if not motion_detected:
+                            # Keep motion active briefly when food is momentarily occluded by a hand.
+                            recently_saw_food = (
+                                (wall_now - float(config.last_food_seen_ts)) <= FOOD_OCCLUSION_LOOKBACK_SECONDS
+                            )
+                            if (
+                                not detections
+                                and bool(person_detections)
+                                and recently_saw_food
+                                and wall_now <= float(config.occlusion_motion_until)
+                            ):
+                                motion_detected = True
+                                motion_score = max(float(motion_score), OCCLUDED_MOTION_PROXY_SCORE)
+                                motion_source = "food_occluded"
+                        if motion_detected:
+                            config.occlusion_motion_until = wall_now + OCCLUDED_MOTION_HOLD_SECONDS
                     else:
                         config.motion_tracks.clear()
                         config.next_motion_track_id = 1
+                        config.food_motion_confirm_streak = 0
                         motion_detected = False
                         motion_score = 0.0
 
                     if motion_detected and not config.last_motion_active:
-                        config.motion_event_times.append(now)
+                        config.motion_event_times.append(wall_now)
                     while (
                         config.motion_event_times
-                        and (now - config.motion_event_times[0]) > HAND_TO_MOUTH_WINDOW_SECONDS
+                        and (wall_now - config.motion_event_times[0]) > HAND_TO_MOUTH_WINDOW_SECONDS
                     ):
                         config.motion_event_times.popleft()
                     config.last_motion_active = bool(motion_detected)
@@ -2885,6 +3477,13 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.next_motion_track_id = 1
                 config.motion_event_times.clear()
                 config.last_motion_active = False
+                config.last_food_seen_ts = 0.0
+                config.occlusion_motion_until = 0.0
+                config.person_proxy_prev_gray = None
+                config.person_proxy_active_until = 0.0
+                config.person_proxy_trigger_streak = 0
+                config.food_motion_confirm_streak = 0
+                config.person_alert_history.clear()
                 last_detections = []
                 last_motion_detected = False
                 last_motion_score = 0.0
@@ -2914,7 +3513,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
             motion_burst_trigger = (
                 inference_ran
                 and motion_detected
-                and bool(detections)
+                and (bool(detections) or bool(person_detections))
                 and len(config.motion_event_times) >= HAND_TO_MOUTH_REQUIRED_EVENTS
             )
             stationary_followup_trigger = (
@@ -2923,16 +3522,41 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 and not motion_detected
                 and config.stationary_first_alert_ts > 0.0
                 and not config.stationary_followup_sent
-                and (now - config.stationary_first_alert_ts) >= STATIONARY_FOLLOWUP_SECONDS
+                and (wall_now - config.stationary_first_alert_ts) >= STATIONARY_FOLLOWUP_SECONDS
             )
             initial_trigger = (
                 inference_ran
                 and detections
                 and config.consecutive >= max(1, persist_frames)
                 and config.armed
-                and (now - config.last_alert_ts) >= max(0.0, cooldown)
+                and (wall_now - config.last_alert_ts) >= max(0.0, cooldown)
             )
-            if motion_burst_trigger or stationary_followup_trigger or initial_trigger:
+
+            same_person_suppressed = False
+            alert_person_center = select_alert_person_center(person_detections, detections)
+            if alert_person_center is not None:
+                # Keep only recent person-alert entries in the configured time window.
+                while (
+                    config.person_alert_history
+                    and (wall_now - float(config.person_alert_history[0][2])) > SAME_PERSON_ALERT_WINDOW_SECONDS
+                ):
+                    config.person_alert_history.popleft()
+                frame_diag = math.hypot(float(frame.shape[1]), float(frame.shape[0]))
+                suppression_distance = SAME_PERSON_SUPPRESSION_DISTANCE_RATIO * max(1.0, frame_diag)
+                matched_alerts = 0
+                for px, py, pts in config.person_alert_history:
+                    if (wall_now - float(pts)) > SAME_PERSON_ALERT_WINDOW_SECONDS:
+                        continue
+                    distance = math.hypot(alert_person_center[0] - px, alert_person_center[1] - py)
+                    if distance <= suppression_distance:
+                        matched_alerts += 1
+                same_person_suppressed = matched_alerts >= SAME_PERSON_MAX_ALERTS_IN_WINDOW
+
+            should_alert = (
+                not same_person_suppressed
+                and (motion_burst_trigger or stationary_followup_trigger or initial_trigger)
+            )
+            if should_alert:
                 reason = "initial"
                 if motion_burst_trigger:
                     reason = "motion_burst"
@@ -2942,10 +3566,16 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     frame,
                     detections,
                     snippet_dir=config.snippet_dir,
+                    video_dir=config.video_dir,
+                    recent_frames=list(recent_frames),
+                    video_fps=stream_fps,
                     camera_zone=camera_zone,
                     context_detections=all_detections,
                     motion_detected=motion_detected,
                     motion_score=motion_score,
+                    hand_to_mouth_source=motion_source,
+                    hand_to_mouth_event_count=len(config.motion_event_times),
+                    attach_video=motion_burst_trigger,
                     alert_reason=reason,
                 )
                 with config.alert_lock:
@@ -2954,7 +3584,15 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         alert,
                         summary_csv_path=config.detection_summary_csv,
                     )
-                config.last_alert_ts = now
+                config.last_alert_ts = wall_now
+                if alert_person_center is not None:
+                    config.person_alert_history.append(
+                        (
+                            float(alert_person_center[0]),
+                            float(alert_person_center[1]),
+                            float(wall_now),
+                        )
+                    )
                 if motion_burst_trigger:
                     # Immediate burst alerts bypass cooldown/arming but should not spam every frame.
                     config.motion_event_times.clear()
@@ -2966,8 +3604,11 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         config.stationary_first_alert_ts = 0.0
                         config.stationary_followup_sent = False
                     else:
-                        config.stationary_first_alert_ts = now
+                        config.stationary_first_alert_ts = wall_now
                         config.stationary_followup_sent = False
+            elif same_person_suppressed and motion_burst_trigger:
+                # Prevent burst-alert loops for one person while still allowing future events.
+                config.motion_event_times.clear()
 
             annotated = draw_detections(frame, detections) if detection_enabled else frame.copy()
             if detection_enabled and motion_detected:

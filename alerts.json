@@ -1042,7 +1042,7 @@
   },
   {
     "id": "ed895c3cbf8d",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:08:23",
     "zone": "Zone A",
     "frame_size": {
@@ -1070,13 +1070,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "ed895c3cbf8d_0_banana.jpg"
+        "snippet_file": "ed895c3cbf8d_0_banana.jpg",
+        "training_exported": true,
+        "training_sample": "ed895c3cbf8d_0_banana.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:51",
+    "updated_at": "2026-03-26T23:41:51"
   },
   {
     "id": "92d9e1e56e2b",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:08:38",
     "zone": "Zone A",
     "frame_size": {
@@ -1104,13 +1109,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "92d9e1e56e2b_0_bottle.jpg"
+        "snippet_file": "92d9e1e56e2b_0_bottle.jpg",
+        "training_exported": true,
+        "training_sample": "92d9e1e56e2b_0_bottle.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:50",
+    "updated_at": "2026-03-26T23:41:50"
   },
   {
     "id": "ede8777e409f",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:09:01",
     "zone": "Zone A",
     "frame_size": {
@@ -1135,44 +1145,18 @@
           838.46
         ],
         "zone": "Zone A",
-        "snippet_file": "ede8777e409f_0_bottle.jpg"
+        "snippet_file": "ede8777e409f_0_bottle.jpg",
+        "training_exported": true,
+        "training_sample": "ede8777e409f_0_bottle.jpg"
       }
-    ]
-  },
-  {
-    "id": "1c82edb801e7",
-    "status": "new",
-    "timestamp": "2026-03-25T16:09:20",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 1920,
-      "height": 1080
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
-    "detections": [
-      {
-        "class_id": 39,
-        "class_name": "bottle",
-        "confidence": 0.5512,
-        "bbox_xyxy": [
-          642.6,
-          933.6,
-          737.97,
-          1077.72
-        ],
-        "center_xy": [
-          690.29,
-          1005.66
-        ],
-        "zone": "Zone A",
-        "snippet_file": "1c82edb801e7_0_bottle.jpg"
-      }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:49",
+    "updated_at": "2026-03-26T23:41:49"
   },
   {
     "id": "60ab0125935b",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:09:35",
     "zone": "Zone A",
     "frame_size": {
@@ -1197,13 +1181,18 @@
           857.2
         ],
         "zone": "Zone A",
-        "snippet_file": "60ab0125935b_0_donut.jpg"
+        "snippet_file": "60ab0125935b_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "60ab0125935b_0_donut.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:36",
+    "updated_at": "2026-03-26T23:41:36"
   },
   {
     "id": "0de10e673173",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:17:40",
     "zone": "Zone A",
     "frame_size": {
@@ -1228,13 +1217,18 @@
           690.15
         ],
         "zone": "Zone A",
-        "snippet_file": "0de10e673173_0_donut.jpg"
+        "snippet_file": "0de10e673173_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "0de10e673173_0_donut.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:33",
+    "updated_at": "2026-03-26T23:41:33"
   },
   {
     "id": "8d0260611bbb",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:18:40",
     "zone": "Zone A",
     "frame_size": {
@@ -1262,13 +1256,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "8d0260611bbb_0_cup.jpg"
+        "snippet_file": "8d0260611bbb_0_cup.jpg",
+        "training_exported": true,
+        "training_sample": "8d0260611bbb_0_cup.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:29",
+    "updated_at": "2026-03-26T23:41:29"
   },
   {
     "id": "6b2f654c74a0",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:18:55",
     "zone": "Zone A",
     "frame_size": {
@@ -1296,13 +1295,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "6b2f654c74a0_0_hot_dog.jpg"
+        "snippet_file": "6b2f654c74a0_0_hot_dog.jpg",
+        "training_exported": true,
+        "training_sample": "6b2f654c74a0_0_hot_dog.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:23",
+    "updated_at": "2026-03-26T23:41:23"
   },
   {
     "id": "05e31e2bdbd8",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:19:11",
     "zone": "Zone A",
     "frame_size": {
@@ -1330,13 +1334,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "05e31e2bdbd8_0_donut.jpg"
+        "snippet_file": "05e31e2bdbd8_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "05e31e2bdbd8_0_donut.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:21",
+    "updated_at": "2026-03-26T23:41:21"
   },
   {
     "id": "85793b61c6f5",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:35:42",
     "zone": "Zone A",
     "frame_size": {
@@ -1364,13 +1373,18 @@
         "motion_score": 0.303,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "85793b61c6f5_0_donut.jpg"
+        "snippet_file": "85793b61c6f5_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "85793b61c6f5_0_donut.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:20",
+    "updated_at": "2026-03-26T23:41:20"
   },
   {
     "id": "3420ffc8d640",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:36:12",
     "zone": "Zone A",
     "frame_size": {
@@ -1398,13 +1412,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "3420ffc8d640_0_banana.jpg"
+        "snippet_file": "3420ffc8d640_0_banana.jpg",
+        "training_exported": true,
+        "training_sample": "3420ffc8d640_0_banana.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:18",
+    "updated_at": "2026-03-26T23:41:18"
   },
   {
     "id": "c2246cb6ebfc",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:37:03",
     "zone": "Zone A",
     "frame_size": {
@@ -1432,13 +1451,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "c2246cb6ebfc_0_donut.jpg"
+        "snippet_file": "c2246cb6ebfc_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "c2246cb6ebfc_0_donut.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:16",
+    "updated_at": "2026-03-26T23:41:16"
   },
   {
     "id": "b5ad8f4f39e1",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:39:23",
     "zone": "Zone A",
     "frame_size": {
@@ -1466,13 +1490,18 @@
         "motion_score": 1.6,
         "consumption_motion": true,
         "zone": "Zone A",
-        "snippet_file": "b5ad8f4f39e1_0_donut.jpg"
+        "snippet_file": "b5ad8f4f39e1_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "b5ad8f4f39e1_0_donut.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:15",
+    "updated_at": "2026-03-26T23:41:15"
   },
   {
     "id": "7551949c2607",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:39:47",
     "zone": "Zone A",
     "frame_size": {
@@ -1500,13 +1529,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "7551949c2607_0_donut.jpg"
+        "snippet_file": "7551949c2607_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "7551949c2607_0_donut.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:14",
+    "updated_at": "2026-03-26T23:41:14"
   },
   {
     "id": "2b2bba59bc4f",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:40:04",
     "zone": "Zone A",
     "frame_size": {
@@ -1534,13 +1568,18 @@
         "motion_score": 5.128,
         "consumption_motion": true,
         "zone": "Zone A",
-        "snippet_file": "2b2bba59bc4f_0_donut.jpg"
+        "snippet_file": "2b2bba59bc4f_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "2b2bba59bc4f_0_donut.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:13",
+    "updated_at": "2026-03-26T23:41:13"
   },
   {
     "id": "db493ffd1724",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-25T16:40:34",
     "zone": "Zone A",
     "frame_size": {
@@ -1568,557 +1607,18 @@
         "motion_score": 0.0,
         "consumption_motion": false,
         "zone": "Zone A",
-        "snippet_file": "db493ffd1724_0_donut.jpg"
+        "snippet_file": "db493ffd1724_0_donut.jpg",
+        "training_exported": true,
+        "training_sample": "db493ffd1724_0_donut.jpg"
       }
-    ]
-  },
-  {
-    "id": "e81e8ddc5156",
-    "status": "new",
-    "timestamp": "2026-03-25T16:41:03",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 1920,
-      "height": 1080
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 2.873,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.6961,
-        "bbox_xyxy": [
-          452.17,
-          581.96,
-          772.86,
-          934.25
-        ],
-        "center_xy": [
-          612.51,
-          758.11
-        ],
-        "motion_track_id": 24,
-        "motion_score": 2.873,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "e81e8ddc5156_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "a671f28302f2",
-    "status": "new",
-    "timestamp": "2026-03-26T21:35:56",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.6634,
-        "bbox_xyxy": [
-          263.06,
-          280.55,
-          373.09,
-          393.39
-        ],
-        "center_xy": [
-          318.08,
-          336.97
-        ],
-        "motion_track_id": 3,
-        "motion_score": 0.0,
-        "consumption_motion": false,
-        "zone": "Zone A",
-        "snippet_file": "a671f28302f2_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "ab0d8dbe0cb8",
-    "status": "new",
-    "timestamp": "2026-03-26T21:36:18",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.5814,
-        "bbox_xyxy": [
-          254.39,
-          274.96,
-          349.16,
-          387.64
-        ],
-        "center_xy": [
-          301.78,
-          331.3
-        ],
-        "motion_track_id": 5,
-        "motion_score": 0.0,
-        "consumption_motion": false,
-        "zone": "Zone A",
-        "snippet_file": "ab0d8dbe0cb8_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "aa276c43bfdd",
-    "status": "new",
-    "timestamp": "2026-03-26T21:37:05",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.713,
-        "bbox_xyxy": [
-          209.33,
-          239.64,
-          299.48,
-          329.24
-        ],
-        "center_xy": [
-          254.41,
-          284.44
-        ],
-        "motion_track_id": 6,
-        "motion_score": 0.0,
-        "consumption_motion": false,
-        "zone": "Zone A",
-        "snippet_file": "aa276c43bfdd_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "cafbf0e5165f",
-    "status": "new",
-    "timestamp": "2026-03-26T21:37:59",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.7388,
-        "bbox_xyxy": [
-          252.91,
-          250.55,
-          346.57,
-          339.65
-        ],
-        "center_xy": [
-          299.74,
-          295.1
-        ],
-        "motion_track_id": 10,
-        "motion_score": 0.0,
-        "consumption_motion": false,
-        "zone": "Zone A",
-        "snippet_file": "cafbf0e5165f_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "35979363608b",
-    "status": "new",
-    "timestamp": "2026-03-26T21:57:52",
-    "alert_reason": "motion_burst",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 1.008,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.8259,
-        "bbox_xyxy": [
-          253.06,
-          241.4,
-          340.87,
-          324.91
-        ],
-        "center_xy": [
-          296.96,
-          283.16
-        ],
-        "motion_track_id": 3,
-        "motion_score": 1.008,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "35979363608b_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "84de3ce972c2",
-    "status": "new",
-    "timestamp": "2026-03-26T21:58:03",
-    "alert_reason": "motion_burst",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 1.68,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.5657,
-        "bbox_xyxy": [
-          234.33,
-          240.5,
-          320.83,
-          314.34
-        ],
-        "center_xy": [
-          277.58,
-          277.42
-        ],
-        "motion_track_id": 4,
-        "motion_score": 1.68,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "84de3ce972c2_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "8a2e78f6f847",
-    "status": "new",
-    "timestamp": "2026-03-26T21:58:08",
-    "alert_reason": "motion_burst",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 2.089,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.6883,
-        "bbox_xyxy": [
-          225.14,
-          263.85,
-          313.27,
-          349.0
-        ],
-        "center_xy": [
-          269.2,
-          306.43
-        ],
-        "motion_track_id": 4,
-        "motion_score": 2.089,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "8a2e78f6f847_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "954384c732bf",
-    "status": "new",
-    "timestamp": "2026-03-26T21:58:09",
-    "alert_reason": "motion_burst",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 2.379,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.7518,
-        "bbox_xyxy": [
-          219.2,
-          260.21,
-          307.74,
-          350.17
-        ],
-        "center_xy": [
-          263.47,
-          305.19
-        ],
-        "motion_track_id": 4,
-        "motion_score": 2.379,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "954384c732bf_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "df76c359ddc0",
-    "status": "new",
-    "timestamp": "2026-03-26T21:58:10",
-    "alert_reason": "motion_burst",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 2.508,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.7858,
-        "bbox_xyxy": [
-          233.59,
-          242.87,
-          317.12,
-          313.08
-        ],
-        "center_xy": [
-          275.36,
-          277.97
-        ],
-        "motion_track_id": 4,
-        "motion_score": 2.508,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "df76c359ddc0_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "ff5c40839d46",
-    "status": "new",
-    "timestamp": "2026-03-26T21:58:39",
-    "alert_reason": "initial",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.719,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.7303,
-        "bbox_xyxy": [
-          326.96,
-          96.56,
-          474.26,
-          266.54
-        ],
-        "center_xy": [
-          400.61,
-          181.55
-        ],
-        "motion_track_id": 5,
-        "motion_score": 0.719,
-        "consumption_motion": false,
-        "zone": "Zone A",
-        "snippet_file": "ff5c40839d46_0_donut.jpg"
-      }
-    ]
-  },
-  {
-    "id": "7862ce7f0da5",
-    "status": "new",
-    "timestamp": "2026-03-26T22:10:52",
-    "alert_reason": "initial",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": false,
-    "consumption_motion_score": 0.0,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.7804,
-        "bbox_xyxy": [
-          272.06,
-          247.7,
-          380.29,
-          348.2
-        ],
-        "center_xy": [
-          326.18,
-          297.95
-        ],
-        "motion_track_id": 2,
-        "motion_score": 0.0,
-        "consumption_motion": false,
-        "zone": "Zone A",
-        "snippet_file": "7862ce7f0da5_0_donut.jpg",
-        "snippet_bbox_xywhn": [
-          0.465077,
-          0.620833,
-          0.183986,
-          0.208333
-        ]
-      }
-    ]
-  },
-  {
-    "id": "324a78875e06",
-    "status": "new",
-    "timestamp": "2026-03-26T22:11:04",
-    "alert_reason": "motion_burst",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 1.466,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.9356,
-        "bbox_xyxy": [
-          319.49,
-          243.03,
-          443.94,
-          367.04
-        ],
-        "center_xy": [
-          381.71,
-          305.03
-        ],
-        "motion_track_id": 3,
-        "motion_score": 1.466,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "324a78875e06_0_donut.jpg",
-        "snippet_bbox_xywhn": [
-          0.596094,
-          0.635417,
-          0.195312,
-          0.258333
-        ]
-      }
-    ]
-  },
-  {
-    "id": "66b6037bb7d7",
-    "status": "new",
-    "timestamp": "2026-03-26T22:11:12",
-    "alert_reason": "motion_burst",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 1.52,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.8927,
-        "bbox_xyxy": [
-          265.82,
-          276.03,
-          389.76,
-          390.3
-        ],
-        "center_xy": [
-          327.79,
-          333.16
-        ],
-        "motion_track_id": 4,
-        "motion_score": 1.52,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "66b6037bb7d7_0_donut.jpg",
-        "snippet_bbox_xywhn": [
-          0.5125,
-          0.69375,
-          0.19375,
-          0.2375
-        ]
-      }
-    ]
-  },
-  {
-    "id": "7c6bf40c8cb0",
-    "status": "new",
-    "timestamp": "2026-03-26T22:13:36",
-    "alert_reason": "motion_burst",
-    "zone": "Zone A",
-    "frame_size": {
-      "width": 640,
-      "height": 480
-    },
-    "consumption_motion_detected": true,
-    "consumption_motion_score": 1.193,
-    "detections": [
-      {
-        "class_id": 54,
-        "class_name": "donut",
-        "confidence": 0.7521,
-        "bbox_xyxy": [
-          229.33,
-          203.11,
-          366.18,
-          340.6
-        ],
-        "center_xy": [
-          297.76,
-          271.85
-        ],
-        "motion_track_id": 1,
-        "motion_score": 1.193,
-        "consumption_motion": true,
-        "zone": "Zone A",
-        "snippet_file": "7c6bf40c8cb0_0_donut.jpg",
-        "snippet_bbox_xywhn": [
-          0.464844,
-          0.566667,
-          0.214062,
-          0.2875
-        ]
-      }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:41:11",
+    "updated_at": "2026-03-26T23:41:11"
   },
   {
     "id": "88446ddb7cd2",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-26T22:14:33",
     "alert_reason": "initial",
     "zone": "Zone A",
@@ -2153,13 +1653,18 @@
           0.865625,
           0.19375,
           0.26875
-        ]
+        ],
+        "training_exported": true,
+        "training_sample": "88446ddb7cd2_0_bottle.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:40:58",
+    "updated_at": "2026-03-26T23:40:58"
   },
   {
     "id": "55c61fb4db91",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-26T22:14:34",
     "alert_reason": "motion_burst",
     "zone": "Zone A",
@@ -2194,13 +1699,18 @@
           0.773958,
           0.167192,
           0.452083
-        ]
+        ],
+        "training_exported": true,
+        "training_sample": "55c61fb4db91_0_bottle.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:40:56",
+    "updated_at": "2026-03-26T23:40:56"
   },
   {
     "id": "62acde14c7bf",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-26T22:14:35",
     "alert_reason": "motion_burst",
     "zone": "Zone A",
@@ -2235,13 +1745,18 @@
           0.785417,
           0.2,
           0.425
-        ]
+        ],
+        "training_exported": true,
+        "training_sample": "62acde14c7bf_0_bottle.jpg"
       }
-    ]
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:40:55",
+    "updated_at": "2026-03-26T23:40:55"
   },
   {
     "id": "2da2fe6978f9",
-    "status": "new",
+    "status": "accepted",
     "timestamp": "2026-03-26T22:15:02",
     "alert_reason": "initial",
     "zone": "Zone A",
@@ -2276,8 +1791,756 @@
           0.660417,
           0.148089,
           0.575
+        ],
+        "training_exported": true,
+        "training_sample": "2da2fe6978f9_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:40:53",
+    "updated_at": "2026-03-26T23:40:53"
+  },
+  {
+    "id": "10d1776e0be2",
+    "status": "accepted",
+    "timestamp": "2026-03-26T23:26:48",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.247,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "10d1776e0be2.mp4",
+    "detections": [],
+    "accepted_at": "2026-03-26T23:28:22",
+    "updated_at": "2026-03-26T23:28:22"
+  },
+  {
+    "id": "3cfe4998e12b",
+    "status": "accepted",
+    "timestamp": "2026-03-26T23:42:03",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.247,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "3cfe4998e12b.mp4",
+    "video_mime": "video/mp4",
+    "detections": [],
+    "accepted_at": "2026-03-26T23:42:18",
+    "updated_at": "2026-03-26T23:42:18"
+  },
+  {
+    "id": "07fd39f2d89c",
+    "status": "accepted",
+    "timestamp": "2026-03-26T23:42:38",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.156,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "07fd39f2d89c.mp4",
+    "video_mime": "video/mp4",
+    "detections": [],
+    "accepted_at": "2026-03-26T23:42:50",
+    "updated_at": "2026-03-26T23:42:50"
+  },
+  {
+    "id": "f6221dab5c25",
+    "status": "accepted",
+    "timestamp": "2026-03-26T23:43:04",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.101,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "f6221dab5c25.mp4",
+    "video_mime": "video/mp4",
+    "detections": [],
+    "accepted_at": "2026-03-26T23:43:17",
+    "updated_at": "2026-03-26T23:43:17"
+  },
+  {
+    "id": "738995df5df8",
+    "status": "accepted",
+    "timestamp": "2026-03-26T23:43:42",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.5,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 2,
+    "video_file": "738995df5df8.mp4",
+    "video_mime": "video/mp4",
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.8395,
+        "bbox_xyxy": [
+          294.55,
+          284.51,
+          377.76,
+          377.92
+        ],
+        "center_xy": [
+          336.16,
+          331.21
+        ],
+        "motion_track_id": 2,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "738995df5df8_0_donut.jpg",
+        "snippet_bbox_xywhn": [
+          0.497483,
+          0.690625,
+          0.139262,
+          0.19375
+        ],
+        "training_exported": true,
+        "training_sample": "738995df5df8_0_donut.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:44:03",
+    "updated_at": "2026-03-26T23:44:03",
+    "training_video_exported": true,
+    "training_video_samples": 12
+  },
+  {
+    "id": "7b1ec4e54d67",
+    "status": "new",
+    "timestamp": "2026-03-26T23:53:41",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.323,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "7b1ec4e54d67.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "180663114876",
+    "status": "new",
+    "timestamp": "2026-03-26T23:54:30",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 0.86,
+    "hand_to_mouth_source": "food_occluded",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "180663114876.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "bdc8765a5a64",
+    "status": "new",
+    "timestamp": "2026-03-26T23:54:41",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.5,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "bdc8765a5a64.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "0f5c829ce30e",
+    "status": "new",
+    "timestamp": "2026-03-26T23:54:55",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 0.86,
+    "hand_to_mouth_source": "food_occluded",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "0f5c829ce30e.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "5df6f66edfe8",
+    "status": "new",
+    "timestamp": "2026-03-26T23:55:17",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 0.86,
+    "hand_to_mouth_source": "food_occluded",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "5df6f66edfe8.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "22ba7d642666",
+    "status": "accepted",
+    "timestamp": "2026-03-26T23:56:21",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 1,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.5541,
+        "bbox_xyxy": [
+          227.25,
+          248.31,
+          349.31,
+          479.28
+        ],
+        "center_xy": [
+          288.28,
+          363.8
+        ],
+        "motion_track_id": 14,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "22ba7d642666_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.398291,
+          0.757292,
+          0.208547,
+          0.48125
+        ],
+        "training_exported": true,
+        "training_sample": "22ba7d642666_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-26T23:56:38",
+    "updated_at": "2026-03-26T23:56:38"
+  },
+  {
+    "id": "21da74a55630",
+    "status": "new",
+    "timestamp": "2026-03-26T23:56:55",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.379,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "21da74a55630.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "ebeba839175e",
+    "status": "accepted",
+    "timestamp": "2026-03-27T00:03:46",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.176,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "ebeba839175e.mp4",
+    "video_mime": "video/mp4",
+    "detections": [],
+    "accepted_at": "2026-03-27T00:04:08",
+    "updated_at": "2026-03-27T00:04:08"
+  },
+  {
+    "id": "632df0355d83",
+    "status": "new",
+    "timestamp": "2026-03-27T00:04:04",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.11,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "632df0355d83.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "b2e020e5843b",
+    "status": "new",
+    "timestamp": "2026-03-27T00:04:19",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.181,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "b2e020e5843b.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "9141d3d5d7af",
+    "status": "new",
+    "timestamp": "2026-03-27T00:05:35",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 2,
+    "video_file": "9141d3d5d7af.mp4",
+    "video_mime": "video/mp4",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.7708,
+        "bbox_xyxy": [
+          200.3,
+          210.16,
+          335.7,
+          479.5
+        ],
+        "center_xy": [
+          268.0,
+          344.83
+        ],
+        "motion_track_id": 6,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "9141d3d5d7af_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.5,
+          0.583333,
+          0.715789,
+          0.833333
         ]
       }
     ]
+  },
+  {
+    "id": "6183b2db813a",
+    "status": "new",
+    "timestamp": "2026-03-27T00:05:36",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.5,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "6183b2db813a.mp4",
+    "video_mime": "video/mp4",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.6137,
+        "bbox_xyxy": [
+          200.85,
+          211.74,
+          334.73,
+          479.17
+        ],
+        "center_xy": [
+          267.79,
+          345.45
+        ],
+        "motion_track_id": 6,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "6183b2db813a_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.292776,
+          0.719792,
+          0.254753,
+          0.55625
+        ]
+      }
+    ]
+  },
+  {
+    "id": "83623c1bcab7",
+    "status": "new",
+    "timestamp": "2026-03-27T00:05:40",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 0.86,
+    "hand_to_mouth_source": "food_occluded",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "83623c1bcab7.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "5a3de261e96d",
+    "status": "new",
+    "timestamp": "2026-03-27T00:05:43",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 0.86,
+    "hand_to_mouth_source": "food_occluded",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "5a3de261e96d.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "e0f17a16a5c0",
+    "status": "accepted",
+    "timestamp": "2026-03-27T00:22:07",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.5,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "e0f17a16a5c0.mp4",
+    "video_mime": "video/mp4",
+    "detections": [],
+    "accepted_at": "2026-03-27T00:23:51",
+    "updated_at": "2026-03-27T00:23:51"
+  },
+  {
+    "id": "4e4336c0b22b",
+    "status": "accepted",
+    "timestamp": "2026-03-27T00:24:07",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.346,
+    "hand_to_mouth_source": "food_track",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "4e4336c0b22b.mp4",
+    "video_mime": "video/mp4",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.6919,
+        "bbox_xyxy": [
+          199.62,
+          152.12,
+          310.86,
+          373.93
+        ],
+        "center_xy": [
+          255.24,
+          263.02
+        ],
+        "motion_track_id": 9,
+        "motion_score": 1.346,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "4e4336c0b22b_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.33821,
+          0.547917,
+          0.19105,
+          0.4625
+        ],
+        "training_exported": true,
+        "training_sample": "4e4336c0b22b_0_bottle.jpg"
+      }
+    ],
+    "training_video_exported": true,
+    "training_video_samples": 12,
+    "accepted_samples": 13,
+    "accepted_at": "2026-03-27T00:39:36",
+    "updated_at": "2026-03-27T00:39:36"
+  },
+  {
+    "id": "8efe95fbeb46",
+    "status": "accepted",
+    "timestamp": "2026-03-27T00:24:27",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 2,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.8323,
+        "bbox_xyxy": [
+          186.08,
+          182.49,
+          299.53,
+          478.53
+        ],
+        "center_xy": [
+          242.8,
+          330.51
+        ],
+        "motion_track_id": 9,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "8efe95fbeb46_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.326279,
+          0.688542,
+          0.201058,
+          0.61875
+        ],
+        "training_exported": true,
+        "training_sample": "8efe95fbeb46_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-27T00:39:28",
+    "updated_at": "2026-03-27T00:39:28"
+  },
+  {
+    "id": "2dbf94573955",
+    "status": "accepted",
+    "timestamp": "2026-03-27T00:37:44",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 0,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.7944,
+        "bbox_xyxy": [
+          98.83,
+          372.41,
+          197.44,
+          479.69
+        ],
+        "center_xy": [
+          148.13,
+          426.05
+        ],
+        "zone": "Zone A",
+        "snippet_file": "2dbf94573955_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.23125,
+          0.883871,
+          0.153125,
+          0.232258
+        ],
+        "training_exported": true,
+        "training_sample": "2dbf94573955_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-27T00:39:29",
+    "updated_at": "2026-03-27T00:39:29"
+  },
+  {
+    "id": "b12d72be048c",
+    "status": "accepted",
+    "timestamp": "2026-03-27T00:39:53",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.5,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "b12d72be048c.mp4",
+    "video_mime": "video/mp4",
+    "detections": [],
+    "accepted_at": "2026-03-27T00:40:10",
+    "updated_at": "2026-03-27T00:40:10"
+  },
+  {
+    "id": "7db7fb9ec441",
+    "status": "accepted",
+    "timestamp": "2026-03-27T00:50:53",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 0,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.646,
+        "bbox_xyxy": [
+          225.54,
+          369.39,
+          336.19,
+          479.66
+        ],
+        "center_xy": [
+          280.87,
+          424.52
+        ],
+        "zone": "Zone A",
+        "snippet_file": "7db7fb9ec441_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.383895,
+          0.884375,
+          0.205993,
+          0.23125
+        ],
+        "training_exported": true,
+        "training_sample": "7db7fb9ec441_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-03-27T00:51:02",
+    "updated_at": "2026-03-27T00:51:02"
+  },
+  {
+    "id": "ffa672ad7738",
+    "status": "new",
+    "timestamp": "2026-03-27T00:51:44",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.5,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "ffa672ad7738.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
+  },
+  {
+    "id": "46ac47a755b2",
+    "status": "new",
+    "timestamp": "2026-03-27T00:52:52",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.5,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "46ac47a755b2.mp4",
+    "video_mime": "video/mp4",
+    "detections": []
   }
 ]

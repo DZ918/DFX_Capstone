@@ -1,5 +1,9 @@
-path: /Users/augusto/Desktop/test opencv/training_data/dataset
+path: C:\Users\ADMIN\Desktop\2026 4S\CIS4910\DFX_Capstone\training_data\dataset
 train: images
 val: images
 names:
   0: bottle
+  1: donut
+  2: banana
+  3: hot dog
+  4: cup
