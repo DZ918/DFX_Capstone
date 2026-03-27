@@ -2518,16 +2518,27 @@ def add_alert_video(
         return None
     safe_fps = max(3.0, float(fps or 8.0))
 
-    codec_candidates = [
-        ("avc1", "mp4", "video/mp4"),
-        ("H264", "mp4", "video/mp4"),
-        ("X264", "mp4", "video/mp4"),
-        ("VP90", "webm", "video/webm"),
-        ("VP80", "webm", "video/webm"),
-        ("mp4v", "mp4", "video/mp4"),
-        ("MJPG", "avi", "video/x-msvideo"),
-        ("XVID", "avi", "video/x-msvideo"),
-    ]
+    # Ubuntu/OpenCV builds often log noisy errors for H264 encoders like h264_v4l2m2m.
+    # Prefer widely available software codecs first on Linux.
+    if platform.system() == "Linux":
+        codec_candidates = [
+            ("mp4v", "mp4", "video/mp4"),
+            ("MJPG", "avi", "video/x-msvideo"),
+            ("XVID", "avi", "video/x-msvideo"),
+            ("VP80", "webm", "video/webm"),
+            ("VP90", "webm", "video/webm"),
+        ]
+    else:
+        codec_candidates = [
+            ("avc1", "mp4", "video/mp4"),
+            ("H264", "mp4", "video/mp4"),
+            ("X264", "mp4", "video/mp4"),
+            ("VP90", "webm", "video/webm"),
+            ("VP80", "webm", "video/webm"),
+            ("mp4v", "mp4", "video/mp4"),
+            ("MJPG", "avi", "video/x-msvideo"),
+            ("XVID", "avi", "video/x-msvideo"),
+        ]
     for codec, extension, mime in codec_candidates:
         output_name = f"{alert_id}.{extension}"
         output_path = os.path.join(video_dir, output_name)
