@@ -1605,5 +1605,679 @@
         "snippet_file": "e81e8ddc5156_0_donut.jpg"
       }
     ]
+  },
+  {
+    "id": "a671f28302f2",
+    "status": "new",
+    "timestamp": "2026-03-26T21:35:56",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.6634,
+        "bbox_xyxy": [
+          263.06,
+          280.55,
+          373.09,
+          393.39
+        ],
+        "center_xy": [
+          318.08,
+          336.97
+        ],
+        "motion_track_id": 3,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "a671f28302f2_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "ab0d8dbe0cb8",
+    "status": "new",
+    "timestamp": "2026-03-26T21:36:18",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.5814,
+        "bbox_xyxy": [
+          254.39,
+          274.96,
+          349.16,
+          387.64
+        ],
+        "center_xy": [
+          301.78,
+          331.3
+        ],
+        "motion_track_id": 5,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "ab0d8dbe0cb8_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "aa276c43bfdd",
+    "status": "new",
+    "timestamp": "2026-03-26T21:37:05",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.713,
+        "bbox_xyxy": [
+          209.33,
+          239.64,
+          299.48,
+          329.24
+        ],
+        "center_xy": [
+          254.41,
+          284.44
+        ],
+        "motion_track_id": 6,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "aa276c43bfdd_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "cafbf0e5165f",
+    "status": "new",
+    "timestamp": "2026-03-26T21:37:59",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.7388,
+        "bbox_xyxy": [
+          252.91,
+          250.55,
+          346.57,
+          339.65
+        ],
+        "center_xy": [
+          299.74,
+          295.1
+        ],
+        "motion_track_id": 10,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "cafbf0e5165f_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "35979363608b",
+    "status": "new",
+    "timestamp": "2026-03-26T21:57:52",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.008,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.8259,
+        "bbox_xyxy": [
+          253.06,
+          241.4,
+          340.87,
+          324.91
+        ],
+        "center_xy": [
+          296.96,
+          283.16
+        ],
+        "motion_track_id": 3,
+        "motion_score": 1.008,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "35979363608b_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "84de3ce972c2",
+    "status": "new",
+    "timestamp": "2026-03-26T21:58:03",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.68,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.5657,
+        "bbox_xyxy": [
+          234.33,
+          240.5,
+          320.83,
+          314.34
+        ],
+        "center_xy": [
+          277.58,
+          277.42
+        ],
+        "motion_track_id": 4,
+        "motion_score": 1.68,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "84de3ce972c2_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "8a2e78f6f847",
+    "status": "new",
+    "timestamp": "2026-03-26T21:58:08",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 2.089,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.6883,
+        "bbox_xyxy": [
+          225.14,
+          263.85,
+          313.27,
+          349.0
+        ],
+        "center_xy": [
+          269.2,
+          306.43
+        ],
+        "motion_track_id": 4,
+        "motion_score": 2.089,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "8a2e78f6f847_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "954384c732bf",
+    "status": "new",
+    "timestamp": "2026-03-26T21:58:09",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 2.379,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.7518,
+        "bbox_xyxy": [
+          219.2,
+          260.21,
+          307.74,
+          350.17
+        ],
+        "center_xy": [
+          263.47,
+          305.19
+        ],
+        "motion_track_id": 4,
+        "motion_score": 2.379,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "954384c732bf_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "df76c359ddc0",
+    "status": "new",
+    "timestamp": "2026-03-26T21:58:10",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 2.508,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.7858,
+        "bbox_xyxy": [
+          233.59,
+          242.87,
+          317.12,
+          313.08
+        ],
+        "center_xy": [
+          275.36,
+          277.97
+        ],
+        "motion_track_id": 4,
+        "motion_score": 2.508,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "df76c359ddc0_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "ff5c40839d46",
+    "status": "new",
+    "timestamp": "2026-03-26T21:58:39",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.719,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.7303,
+        "bbox_xyxy": [
+          326.96,
+          96.56,
+          474.26,
+          266.54
+        ],
+        "center_xy": [
+          400.61,
+          181.55
+        ],
+        "motion_track_id": 5,
+        "motion_score": 0.719,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "ff5c40839d46_0_donut.jpg"
+      }
+    ]
+  },
+  {
+    "id": "7862ce7f0da5",
+    "status": "new",
+    "timestamp": "2026-03-26T22:10:52",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.7804,
+        "bbox_xyxy": [
+          272.06,
+          247.7,
+          380.29,
+          348.2
+        ],
+        "center_xy": [
+          326.18,
+          297.95
+        ],
+        "motion_track_id": 2,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "7862ce7f0da5_0_donut.jpg",
+        "snippet_bbox_xywhn": [
+          0.465077,
+          0.620833,
+          0.183986,
+          0.208333
+        ]
+      }
+    ]
+  },
+  {
+    "id": "324a78875e06",
+    "status": "new",
+    "timestamp": "2026-03-26T22:11:04",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.466,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.9356,
+        "bbox_xyxy": [
+          319.49,
+          243.03,
+          443.94,
+          367.04
+        ],
+        "center_xy": [
+          381.71,
+          305.03
+        ],
+        "motion_track_id": 3,
+        "motion_score": 1.466,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "324a78875e06_0_donut.jpg",
+        "snippet_bbox_xywhn": [
+          0.596094,
+          0.635417,
+          0.195312,
+          0.258333
+        ]
+      }
+    ]
+  },
+  {
+    "id": "66b6037bb7d7",
+    "status": "new",
+    "timestamp": "2026-03-26T22:11:12",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.52,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.8927,
+        "bbox_xyxy": [
+          265.82,
+          276.03,
+          389.76,
+          390.3
+        ],
+        "center_xy": [
+          327.79,
+          333.16
+        ],
+        "motion_track_id": 4,
+        "motion_score": 1.52,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "66b6037bb7d7_0_donut.jpg",
+        "snippet_bbox_xywhn": [
+          0.5125,
+          0.69375,
+          0.19375,
+          0.2375
+        ]
+      }
+    ]
+  },
+  {
+    "id": "7c6bf40c8cb0",
+    "status": "new",
+    "timestamp": "2026-03-26T22:13:36",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.193,
+    "detections": [
+      {
+        "class_id": 54,
+        "class_name": "donut",
+        "confidence": 0.7521,
+        "bbox_xyxy": [
+          229.33,
+          203.11,
+          366.18,
+          340.6
+        ],
+        "center_xy": [
+          297.76,
+          271.85
+        ],
+        "motion_track_id": 1,
+        "motion_score": 1.193,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "7c6bf40c8cb0_0_donut.jpg",
+        "snippet_bbox_xywhn": [
+          0.464844,
+          0.566667,
+          0.214062,
+          0.2875
+        ]
+      }
+    ]
+  },
+  {
+    "id": "88446ddb7cd2",
+    "status": "new",
+    "timestamp": "2026-03-26T22:14:33",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.638,
+        "bbox_xyxy": [
+          98.38,
+          351.01,
+          221.51,
+          479.53
+        ],
+        "center_xy": [
+          159.95,
+          415.27
+        ],
+        "motion_track_id": 2,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "88446ddb7cd2_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.25,
+          0.865625,
+          0.19375,
+          0.26875
+        ]
+      }
+    ]
+  },
+  {
+    "id": "55c61fb4db91",
+    "status": "new",
+    "timestamp": "2026-03-26T22:14:34",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 2.613,
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.8617,
+        "bbox_xyxy": [
+          111.29,
+          262.65,
+          216.92,
+          479.7
+        ],
+        "center_xy": [
+          164.1,
+          371.17
+        ],
+        "motion_track_id": 2,
+        "motion_score": 2.613,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "55c61fb4db91_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.249211,
+          0.773958,
+          0.167192,
+          0.452083
+        ]
+      }
+    ]
+  },
+  {
+    "id": "62acde14c7bf",
+    "status": "new",
+    "timestamp": "2026-03-26T22:14:35",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 3.031,
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.6463,
+        "bbox_xyxy": [
+          86.55,
+          275.05,
+          215.4,
+          479.44
+        ],
+        "center_xy": [
+          150.98,
+          377.24
+        ],
+        "motion_track_id": 2,
+        "motion_score": 3.031,
+        "consumption_motion": true,
+        "zone": "Zone A",
+        "snippet_file": "62acde14c7bf_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.235937,
+          0.785417,
+          0.2,
+          0.425
+        ]
+      }
+    ]
+  },
+  {
+    "id": "2da2fe6978f9",
+    "status": "new",
+    "timestamp": "2026-03-26T22:15:02",
+    "alert_reason": "initial",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.7442,
+        "bbox_xyxy": [
+          239.79,
+          178.88,
+          333.18,
+          455.03
+        ],
+        "center_xy": [
+          286.49,
+          316.96
+        ],
+        "motion_track_id": 3,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "2da2fe6978f9_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.437102,
+          0.660417,
+          0.148089,
+          0.575
+        ]
+      }
+    ]
   }
 ]

@@ -104,6 +104,51 @@ HTML_PAGE = """<!doctype html>
         font-size: 12px;
         color: #374151;
       }
+            .backend-stats {
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                background: #f8fafc;
+                margin-bottom: 10px;
+                overflow: hidden;
+            }
+            .stats-total {
+                padding: 10px;
+                border-bottom: 1px solid var(--border);
+                font-size: 13px;
+                color: #1f2937;
+            }
+            .stats-total strong {
+                font-size: 16px;
+                color: #0f172a;
+            }
+            .stats-table-wrap {
+                max-height: 190px;
+                overflow-y: auto;
+            }
+            .stats-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            .stats-table th,
+            .stats-table td {
+                border-bottom: 1px solid var(--border);
+                padding: 7px 10px;
+                font-size: 12px;
+                text-align: left;
+            }
+            .stats-table th {
+                background: #f1f5f9;
+                color: #334155;
+            }
+            .stats-table td:last-child,
+            .stats-table th:last-child {
+                text-align: right;
+            }
+            .stats-updated {
+                padding: 8px 10px;
+                font-size: 11px;
+                color: #64748b;
+            }
       .alerts-scroll {
         height: min(68vh, 760px);
         overflow-y: auto;
@@ -235,9 +280,20 @@ HTML_PAGE = """<!doctype html>
       }
       .lightbox.open { display: flex; }
       .lightbox-inner { position: relative; max-width: min(1000px, 96vw); max-height: 92vh; }
-      .lightbox img { max-width: 100%; max-height: 92vh; border-radius: 10px; box-shadow: 0 20px 60px rgba(0,0,0,0.45); background: #111827; }
+            .lightbox img {
+                position: relative;
+                z-index: 1;
+                max-width: 100%;
+                max-height: 92vh;
+                border-radius: 10px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+                background: #111827;
+                transform-origin: center center;
+                transition: transform 0.08s ease-out;
+            }
       .lightbox-close {
         position: absolute;
+                z-index: 3;
         top: -12px;
         right: -12px;
         border: 0;
@@ -250,6 +306,24 @@ HTML_PAGE = """<!doctype html>
         line-height: 1;
         cursor: pointer;
       }
+            .lightbox-tools {
+                position: absolute;
+                z-index: 3;
+                top: -12px;
+                right: 30px;
+                display: flex;
+                gap: 6px;
+            }
+            .lightbox-tools button {
+                border: 0;
+                border-radius: 8px;
+                background: #111827;
+                color: #fff;
+                width: 34px;
+                height: 34px;
+                font-size: 16px;
+                cursor: pointer;
+            }
       @media (max-width: 600px) {
         .settings-row { grid-template-columns: 1fr; }
         .alerts-scroll { height: 58vh; }
@@ -374,6 +448,26 @@ HTML_PAGE = """<!doctype html>
             Group by zone
           </label>
         </div>
+                <section class="backend-stats" aria-label="Backend eating and drinking counts">
+                    <div class="stats-total">Total people detected eating/drinking: <strong id="consumptionTotalCount">0</strong></div>
+                    <div class="stats-table-wrap">
+                        <table class="stats-table">
+                            <thead>
+                                <tr>
+                                    <th>Zone</th>
+                                    <th>Category</th>
+                                    <th>Count</th>
+                                </tr>
+                            </thead>
+                            <tbody id="consumptionStatsBody">
+                                <tr>
+                                    <td colspan="3">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="consumptionUpdatedAt" class="stats-updated"></div>
+                </section>
         <div class=\"alerts-scroll\">
           <div id=\"alertsPanel\">
             <details id=\"acceptedSection\" class=\"fold-section\" style=\"display:none;\">
@@ -391,6 +485,11 @@ HTML_PAGE = """<!doctype html>
     </main>
     <div id=\"lightbox\" class=\"lightbox\" aria-hidden=\"true\">
       <div class=\"lightbox-inner\">
+                <div class=\"lightbox-tools\">
+                    <button id=\"zoomOutBtn\" type=\"button\" aria-label=\"Zoom out\">-</button>
+                    <button id=\"zoomResetBtn\" type=\"button\" aria-label=\"Reset zoom\">1:1</button>
+                    <button id=\"zoomInBtn\" type=\"button\" aria-label=\"Zoom in\">+</button>
+                </div>
         <button id=\"lightboxClose\" class=\"lightbox-close\" aria-label=\"Close expanded image\">×</button>
         <img id=\"lightboxImg\" alt=\"Expanded detection\" />
       </div>
@@ -421,17 +520,38 @@ HTML_PAGE = """<!doctype html>
         const lightbox = document.getElementById('lightbox');
         const lightboxImg = document.getElementById('lightboxImg');
         const closeBtn = document.getElementById('lightboxClose');
+                const zoomInBtn = document.getElementById('zoomInBtn');
+                const zoomOutBtn = document.getElementById('zoomOutBtn');
+                const zoomResetBtn = document.getElementById('zoomResetBtn');
         const alertsPanel = document.getElementById('alertsPanel');
+                const minZoom = 0.5;
+                const maxZoom = 5.0;
+                let zoom = 1.0;
+
+                function applyZoom() {
+                    lightboxImg.style.transform = `scale(${zoom.toFixed(2)})`;
+                }
+
+                function setZoom(nextZoom) {
+                    zoom = Math.min(maxZoom, Math.max(minZoom, Number(nextZoom) || 1.0));
+                    applyZoom();
+                }
+
+                function resetZoom() {
+                    setZoom(1.0);
+                }
 
         function closeLightbox() {
           lightbox.classList.remove('open');
           lightbox.setAttribute('aria-hidden', 'true');
           lightboxImg.removeAttribute('src');
+                    resetZoom();
         }
 
         function openLightbox(src, altText) {
           lightboxImg.src = src;
           lightboxImg.alt = altText || 'Expanded detection';
+                    resetZoom();
           lightbox.classList.add('open');
           lightbox.setAttribute('aria-hidden', 'false');
         }
@@ -444,6 +564,16 @@ HTML_PAGE = """<!doctype html>
           openLightbox(img.src, img.alt);
         });
         closeBtn.addEventListener('click', closeLightbox);
+                zoomInBtn.addEventListener('click', () => setZoom(zoom + 0.25));
+                zoomOutBtn.addEventListener('click', () => setZoom(zoom - 0.25));
+                zoomResetBtn.addEventListener('click', resetZoom);
+                lightboxImg.addEventListener('wheel', (event) => {
+                    if (!lightbox.classList.contains('open')) {
+                        return;
+                    }
+                    event.preventDefault();
+                    setZoom(zoom + (event.deltaY < 0 ? 0.15 : -0.15));
+                }, { passive: false });
         lightbox.addEventListener('click', (event) => {
           if (event.target === lightbox) {
             closeLightbox();
@@ -844,6 +974,45 @@ HTML_PAGE = """<!doctype html>
           refreshInFlight = false;
         }
       }
+
+            function renderConsumptionStats(data) {
+                const totalEl = document.getElementById('consumptionTotalCount');
+                const bodyEl = document.getElementById('consumptionStatsBody');
+                const updatedEl = document.getElementById('consumptionUpdatedAt');
+                totalEl.textContent = String(Number(data.total_people_detected || 0));
+                const rows = Array.isArray(data.breakdown) ? data.breakdown : [];
+                if (rows.length === 0) {
+                    bodyEl.innerHTML = '<tr><td colspan="3">No eating/drinking detections yet.</td></tr>';
+                } else {
+                    bodyEl.innerHTML = rows
+                        .map((row) => {
+                            const zone = escapeHtml(row.zone || 'Unassigned');
+                            const category = escapeHtml(row.category || 'unknown');
+                            const count = Number(row.count || 0);
+                            return `<tr><td>${zone}</td><td>${category}</td><td>${count}</td></tr>`;
+                        })
+                        .join('');
+                }
+                const active = Number(data.active_alerts || 0);
+                const accepted = Number(data.accepted_alerts || 0);
+                const generatedAt = data.generated_at ? String(data.generated_at) : 'just now';
+                updatedEl.textContent = `Updated: ${generatedAt} | active: ${active} | accepted: ${accepted}`;
+            }
+
+            async function refreshConsumptionStats() {
+                try {
+                    const res = await fetch('/stats/consumption');
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    const data = await res.json();
+                    renderConsumptionStats(data || {});
+                } catch (err) {
+                    const updatedEl = document.getElementById('consumptionUpdatedAt');
+                    updatedEl.textContent = 'Could not load backend counts right now.';
+                }
+            }
+
       document.getElementById('groupAlertsByZone').addEventListener('change', () => {
         renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
       });
@@ -851,8 +1020,10 @@ HTML_PAGE = """<!doctype html>
       setupSettingsPanel();
       setupSettingsForm();
       refreshAlerts();
+    refreshConsumptionStats();
       refreshTrainStatus();
       setInterval(refreshAlerts, 2000);
+    setInterval(refreshConsumptionStats, 5000);
       setInterval(refreshTrainStatus, 5000);
     </script>
   </body>
@@ -903,6 +1074,9 @@ HANDHELD_FOOD_CLASS_NAMES = {
     "sandwich",
 }
 MOTION_TRIGGER_SCORE = 0.85
+STATIONARY_FOLLOWUP_SECONDS = 30 * 60
+HAND_TO_MOUTH_WINDOW_SECONDS = 30.0
+HAND_TO_MOUTH_REQUIRED_EVENTS = 3
 
 CAMERA_ZONES = tuple(f"Zone {chr(ord('A') + idx)}" for idx in range(9))
 
@@ -1328,6 +1502,82 @@ def ensure_alert_metadata(alerts: list[dict]) -> bool:
     return changed
 
 
+def alert_has_consumption_event(alert: dict) -> bool:
+    """Treat one alert as one eating/drinking person event for backend counts."""
+    if not isinstance(alert, dict):
+        return False
+    if bool(alert.get("consumption_motion_detected", False)):
+        return True
+    detections = alert.get("detections")
+    if not isinstance(detections, list):
+        return False
+    for det in detections:
+        if not isinstance(det, dict):
+            continue
+        class_name = str(det.get("class_name", "")).strip().lower()
+        if class_name in CONSUMPTION_CLASS_NAMES:
+            return True
+    return False
+
+
+def _primary_consumption_category(alert: dict) -> str:
+    """Pick one category per alert so table totals stay person-event based."""
+    detections = alert.get("detections") if isinstance(alert, dict) else None
+    if not isinstance(detections, list):
+        return "unknown"
+    best_name = "unknown"
+    best_conf = -1.0
+    for det in detections:
+        if not isinstance(det, dict):
+            continue
+        class_name = str(det.get("class_name", "")).strip().lower()
+        if class_name not in CONSUMPTION_CLASS_NAMES:
+            continue
+        try:
+            confidence = float(det.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence >= best_conf:
+            best_conf = confidence
+            best_name = class_name
+    return best_name
+
+
+def build_consumption_stats(alerts: list[dict]) -> dict:
+    """Aggregate eating/drinking counts for the dashboard stats table."""
+    total_people_detected = 0
+    active_alerts = 0
+    accepted_alerts = 0
+    breakdown_counts: dict[tuple[str, str], int] = {}
+    for alert in alerts:
+        if not alert_has_consumption_event(alert):
+            continue
+        total_people_detected += 1
+        status = str(alert.get("status", "")).strip().lower()
+        if status == "accepted":
+            accepted_alerts += 1
+        else:
+            active_alerts += 1
+        zone = str(alert.get("zone", "")).strip() or "Unassigned"
+        category = _primary_consumption_category(alert)
+        key = (zone, category)
+        breakdown_counts[key] = breakdown_counts.get(key, 0) + 1
+    breakdown = [
+        {"zone": zone, "category": category, "count": count}
+        for (zone, category), count in sorted(
+            breakdown_counts.items(),
+            key=lambda item: (item[0][0], item[0][1]),
+        )
+    ]
+    return {
+        "total_people_detected": total_people_detected,
+        "active_alerts": active_alerts,
+        "accepted_alerts": accepted_alerts,
+        "breakdown": breakdown,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+    }
+
+
 def read_class_map(path: str) -> dict[str, int]:
     """Load the class-name-to-index map used for accepted-sample training."""
     if not os.path.exists(path):
@@ -1408,9 +1658,16 @@ def export_accepted_alert_samples(alert: dict, config) -> int:
         dest_image = os.path.join(config.training_images_dir, f"{sample_stem}{ext}")
         dest_label = os.path.join(config.training_labels_dir, f"{sample_stem}.txt")
         shutil.copy2(source_path, dest_image)
+        snippet_bbox = det.get("snippet_bbox_xywhn")
+        if not (
+            isinstance(snippet_bbox, (list, tuple))
+            and len(snippet_bbox) == 4
+            and all(isinstance(v, (int, float)) for v in snippet_bbox)
+        ):
+            snippet_bbox = [0.5, 0.5, 1.0, 1.0]
+        cx, cy, bw, bh = (max(0.0, min(1.0, float(v))) for v in snippet_bbox)
         with open(dest_label, "w", encoding="utf-8") as label_handle:
-            # Snippets are tight crops of one object, so full-image box is correct.
-            label_handle.write(f"{class_id} 0.5 0.5 1.0 1.0\n")
+            label_handle.write(f"{class_id} {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}\n")
         det["training_exported"] = True
         det["training_sample"] = os.path.basename(dest_image)
         accepted += 1
@@ -1572,26 +1829,124 @@ def _safe_token(value: str) -> str:
     return token or "item"
 
 
-def add_detection_snippets(frame, detections: list[dict], snippet_dir: str | None, alert_id: str):
-    """Save one crop per detection and attach the generated filenames to the alert payload."""
+def _clamp_box(bounds: list[float], frame_width: int, frame_height: int) -> tuple[int, int, int, int]:
+    """Clamp a float bbox into valid image coordinates."""
+    x1, y1, x2, y2 = bounds
+    left = max(0, min(frame_width - 1, int(round(float(x1)))))
+    top = max(0, min(frame_height - 1, int(round(float(y1)))))
+    right = max(left + 1, min(frame_width, int(round(float(x2)))))
+    bottom = max(top + 1, min(frame_height, int(round(float(y2)))))
+    return left, top, right, bottom
+
+
+def _nearest_person_box(target_box: tuple[int, int, int, int], context_detections: list[dict]) -> tuple[int, int, int, int] | None:
+    """Pick the person bbox nearest to the target item center."""
+    tx1, ty1, tx2, ty2 = target_box
+    target_cx = (tx1 + tx2) / 2.0
+    target_cy = (ty1 + ty2) / 2.0
+    best_distance = float("inf")
+    best_box = None
+    for det in context_detections:
+        if not isinstance(det, dict):
+            continue
+        if str(det.get("class_name", "")).strip().lower() != "person":
+            continue
+        bbox = det.get("bbox_xyxy")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        px1, py1, px2, py2 = (int(float(v)) for v in bbox)
+        pcx = (px1 + px2) / 2.0
+        pcy = (py1 + py2) / 2.0
+        distance = math.hypot(target_cx - pcx, target_cy - pcy)
+        if distance < best_distance:
+            best_distance = distance
+            best_box = (px1, py1, px2, py2)
+    return best_box
+
+
+def add_detection_snippets(
+    frame,
+    detections: list[dict],
+    snippet_dir: str | None,
+    alert_id: str,
+    context_detections: list[dict] | None = None,
+):
+    """Save contextual crops with item/person framing and attach filenames to detections."""
     if not snippet_dir:
         return detections
     os.makedirs(snippet_dir, exist_ok=True)
     height, width = frame.shape[:2]
+    context_detections = context_detections or detections
     for idx, det in enumerate(detections):
-        x1, y1, x2, y2 = det["bbox_xyxy"]
-        left = max(0, min(width - 1, int(x1)))
-        top = max(0, min(height - 1, int(y1)))
-        right = max(left + 1, min(width, int(x2)))
-        bottom = max(top + 1, min(height, int(y2)))
-        crop = frame[top:bottom, left:right]
+        bbox = det.get("bbox_xyxy")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        item_left, item_top, item_right, item_bottom = _clamp_box(list(bbox), width, height)
+        person_box = _nearest_person_box(
+            (item_left, item_top, item_right, item_bottom),
+            context_detections,
+        )
+
+        crop_left, crop_top, crop_right, crop_bottom = item_left, item_top, item_right, item_bottom
+        if person_box is not None:
+            px1, py1, px2, py2 = person_box
+            crop_left = min(crop_left, max(0, px1))
+            crop_top = min(crop_top, max(0, py1))
+            crop_right = max(crop_right, min(width, px2))
+            crop_bottom = max(crop_bottom, min(height, py2))
+
+        box_w = max(1, crop_right - crop_left)
+        box_h = max(1, crop_bottom - crop_top)
+        margin_x = max(16, int(box_w * 0.2))
+        margin_y = max(16, int(box_h * 0.2))
+        crop_left = max(0, crop_left - margin_x)
+        crop_top = max(0, crop_top - margin_y)
+        crop_right = min(width, crop_right + margin_x)
+        crop_bottom = min(height, crop_bottom + margin_y)
+
+        crop = frame[crop_top:crop_bottom, crop_left:crop_right].copy()
         if crop.size == 0:
             continue
+
+        local_item_left = max(0, item_left - crop_left)
+        local_item_top = max(0, item_top - crop_top)
+        local_item_right = max(local_item_left + 1, item_right - crop_left)
+        local_item_bottom = max(local_item_top + 1, item_bottom - crop_top)
+        cv2.rectangle(crop, (local_item_left, local_item_top), (local_item_right, local_item_bottom), (0, 180, 255), 2)
+        class_name = str(det.get("class_name", "item"))
+        cv2.putText(
+            crop,
+            class_name,
+            (local_item_left, max(16, local_item_top - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 180, 255),
+            2,
+        )
+        if person_box is not None:
+            px1, py1, px2, py2 = person_box
+            local_px1 = max(0, px1 - crop_left)
+            local_py1 = max(0, py1 - crop_top)
+            local_px2 = max(local_px1 + 1, px2 - crop_left)
+            local_py2 = max(local_py1 + 1, py2 - crop_top)
+            cv2.rectangle(crop, (local_px1, local_py1), (local_px2, local_py2), (48, 195, 110), 2)
+
         class_token = _safe_token(det.get("class_name", "item"))
         snippet_file = f"{alert_id}_{idx}_{class_token}.jpg"
         snippet_path = os.path.join(snippet_dir, snippet_file)
         if cv2.imwrite(snippet_path, crop):
             det["snippet_file"] = snippet_file
+            crop_h, crop_w = crop.shape[:2]
+            cx = ((local_item_left + local_item_right) / 2.0) / max(1.0, float(crop_w))
+            cy = ((local_item_top + local_item_bottom) / 2.0) / max(1.0, float(crop_h))
+            bw = (local_item_right - local_item_left) / max(1.0, float(crop_w))
+            bh = (local_item_bottom - local_item_top) / max(1.0, float(crop_h))
+            det["snippet_bbox_xywhn"] = [
+                round(max(0.0, min(1.0, cx)), 6),
+                round(max(0.0, min(1.0, cy)), 6),
+                round(max(0.0, min(1.0, bw)), 6),
+                round(max(0.0, min(1.0, bh)), 6),
+            ]
     return detections
 
 
@@ -1600,8 +1955,10 @@ def create_alert(
     detections: list[dict],
     snippet_dir: str | None,
     camera_zone: str,
+    context_detections: list[dict] | None = None,
     motion_detected: bool = False,
     motion_score: float = 0.0,
+    alert_reason: str = "standard",
 ) -> dict:
     """Build the alert record stored in JSON and rendered by the dashboard."""
     alert_id = uuid4().hex[:12]
@@ -1612,11 +1969,18 @@ def create_alert(
         "id": alert_id,
         "status": "new",
         "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "alert_reason": str(alert_reason or "standard"),
         "zone": zone,
         "frame_size": {"width": int(frame.shape[1]), "height": int(frame.shape[0])},
         "consumption_motion_detected": bool(motion_detected),
         "consumption_motion_score": round(float(motion_score), 3),
-        "detections": add_detection_snippets(frame, detections, snippet_dir, alert_id),
+        "detections": add_detection_snippets(
+            frame,
+            detections,
+            snippet_dir,
+            alert_id,
+            context_detections=context_detections,
+        ),
     }
 
 
@@ -2015,6 +2379,10 @@ class DashboardConfig:
         self.clear_count = 0
         self.armed = True
         self.last_alert_ts = 0.0
+        self.stationary_first_alert_ts = 0.0
+        self.stationary_followup_sent = False
+        self.motion_event_times: deque[float] = deque()
+        self.last_motion_active = False
         self.test_mode = test_mode
         self.training_dir = os.path.abspath(training_dir)
         self.training_data_dir = os.path.join(self.training_dir, "dataset")
@@ -2071,6 +2439,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/train/status":
             self._send_train_status()
+            return
+        if parsed.path == "/stats/consumption":
+            self._send_consumption_stats()
             return
         if parsed.path.startswith("/snippets/"):
             self._send_snippet(parsed.path.removeprefix("/snippets/"))
@@ -2225,6 +2596,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         config: DashboardConfig = self.server.config
         self._send_json(training_status_snapshot(config), HTTPStatus.OK)
 
+    def _send_consumption_stats(self):
+        """Return aggregate eating/drinking counts for the dashboard table."""
+        config: DashboardConfig = self.server.config
+        if config.test_mode:
+            frame_width = config.width or 640
+            frame_height = config.height or 360
+            alerts = make_random_alerts(40, frame_width, frame_height)
+            self._send_json(build_consumption_stats(alerts), HTTPStatus.OK)
+            return
+        with config.alert_lock:
+            alerts = read_alerts(config.alert_log)
+            if ensure_alert_metadata(alerts):
+                write_alerts(config.alert_log, alerts)
+        self._send_json(build_consumption_stats(alerts), HTTPStatus.OK)
+
     def _trigger_train_accepted(self):
         """Start training on accepted snippets if the environment supports it."""
         config: DashboardConfig = self.server.config
@@ -2361,6 +2747,10 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.consecutive = 0
                 config.clear_count = 0
                 config.armed = True
+                config.stationary_first_alert_ts = 0.0
+                config.stationary_followup_sent = False
+                config.motion_event_times.clear()
+                config.last_motion_active = False
                 config.motion_tracks.clear()
                 config.next_motion_track_id = 1
                 last_detections = []
@@ -2409,6 +2799,8 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 allowed_ids = None
                 next_inference_at = 0.0
 
+            now = time.time()
+
             ok, frame = cap.read()
             if not ok:
                 cap.release()
@@ -2421,6 +2813,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
             motion_detected = last_motion_detected
             motion_score = last_motion_score
             inference_ran = False
+            all_detections = detections
             if detection_enabled:
                 now = time.perf_counter()
                 inference_due = max_inference_fps <= 0.0 or now >= next_inference_at
@@ -2474,12 +2867,24 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         config.next_motion_track_id = 1
                         motion_detected = False
                         motion_score = 0.0
+
+                    if motion_detected and not config.last_motion_active:
+                        config.motion_event_times.append(now)
+                    while (
+                        config.motion_event_times
+                        and (now - config.motion_event_times[0]) > HAND_TO_MOUTH_WINDOW_SECONDS
+                    ):
+                        config.motion_event_times.popleft()
+                    config.last_motion_active = bool(motion_detected)
+
                     last_detections = detections
                     last_motion_detected = motion_detected
                     last_motion_score = motion_score
             else:
                 config.motion_tracks.clear()
                 config.next_motion_track_id = 1
+                config.motion_event_times.clear()
+                config.last_motion_active = False
                 last_detections = []
                 last_motion_detected = False
                 last_motion_score = 0.0
@@ -2497,26 +2902,51 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.clear_count += 1
                 if config.clear_count >= max(1, clear_frames):
                     config.armed = True
+                    config.stationary_first_alert_ts = 0.0
+                    config.stationary_followup_sent = False
             elif not detection_enabled:
                 config.consecutive = 0
                 config.clear_count = 0
                 config.armed = True
+                config.stationary_first_alert_ts = 0.0
+                config.stationary_followup_sent = False
 
-            now = time.time()
-            if (
+            motion_burst_trigger = (
+                inference_ran
+                and motion_detected
+                and bool(detections)
+                and len(config.motion_event_times) >= HAND_TO_MOUTH_REQUIRED_EVENTS
+            )
+            stationary_followup_trigger = (
+                inference_ran
+                and bool(detections)
+                and not motion_detected
+                and config.stationary_first_alert_ts > 0.0
+                and not config.stationary_followup_sent
+                and (now - config.stationary_first_alert_ts) >= STATIONARY_FOLLOWUP_SECONDS
+            )
+            initial_trigger = (
                 inference_ran
                 and detections
                 and config.consecutive >= max(1, persist_frames)
                 and config.armed
                 and (now - config.last_alert_ts) >= max(0.0, cooldown)
-            ):
+            )
+            if motion_burst_trigger or stationary_followup_trigger or initial_trigger:
+                reason = "initial"
+                if motion_burst_trigger:
+                    reason = "motion_burst"
+                elif stationary_followup_trigger:
+                    reason = "stationary_followup"
                 alert = create_alert(
                     frame,
                     detections,
                     snippet_dir=config.snippet_dir,
                     camera_zone=camera_zone,
+                    context_detections=all_detections,
                     motion_detected=motion_detected,
                     motion_score=motion_score,
+                    alert_reason=reason,
                 )
                 with config.alert_lock:
                     append_alert(
@@ -2525,7 +2955,19 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         summary_csv_path=config.detection_summary_csv,
                     )
                 config.last_alert_ts = now
-                config.armed = False
+                if motion_burst_trigger:
+                    # Immediate burst alerts bypass cooldown/arming but should not spam every frame.
+                    config.motion_event_times.clear()
+                elif stationary_followup_trigger:
+                    config.stationary_followup_sent = True
+                else:
+                    config.armed = False
+                    if motion_detected:
+                        config.stationary_first_alert_ts = 0.0
+                        config.stationary_followup_sent = False
+                    else:
+                        config.stationary_first_alert_ts = now
+                        config.stationary_followup_sent = False
 
             annotated = draw_detections(frame, detections) if detection_enabled else frame.copy()
             if detection_enabled and motion_detected:

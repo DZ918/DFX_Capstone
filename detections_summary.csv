@@ -1,0 +1,19 @@
+alert_id,timestamp,date,weekday,time,zone,category,confidence,status,consumption_motion_detected,consumption_motion_score,snippet_file
+a671f28302f2,2026-03-26T21:35:56,2026-03-26,Thursday,21:35:56,Zone A,donut,0.6634,new,False,0.0,a671f28302f2_0_donut.jpg
+ab0d8dbe0cb8,2026-03-26T21:36:18,2026-03-26,Thursday,21:36:18,Zone A,donut,0.5814,new,False,0.0,ab0d8dbe0cb8_0_donut.jpg
+aa276c43bfdd,2026-03-26T21:37:05,2026-03-26,Thursday,21:37:05,Zone A,donut,0.713,new,False,0.0,aa276c43bfdd_0_donut.jpg
+cafbf0e5165f,2026-03-26T21:37:59,2026-03-26,Thursday,21:37:59,Zone A,donut,0.7388,new,False,0.0,cafbf0e5165f_0_donut.jpg
+35979363608b,2026-03-26T21:57:52,2026-03-26,Thursday,21:57:52,Zone A,donut,0.8259,new,True,1.008,35979363608b_0_donut.jpg
+84de3ce972c2,2026-03-26T21:58:03,2026-03-26,Thursday,21:58:03,Zone A,donut,0.5657,new,True,1.68,84de3ce972c2_0_donut.jpg
+8a2e78f6f847,2026-03-26T21:58:08,2026-03-26,Thursday,21:58:08,Zone A,donut,0.6883,new,True,2.089,8a2e78f6f847_0_donut.jpg
+954384c732bf,2026-03-26T21:58:09,2026-03-26,Thursday,21:58:09,Zone A,donut,0.7518,new,True,2.379,954384c732bf_0_donut.jpg
+df76c359ddc0,2026-03-26T21:58:10,2026-03-26,Thursday,21:58:10,Zone A,donut,0.7858,new,True,2.508,df76c359ddc0_0_donut.jpg
+ff5c40839d46,2026-03-26T21:58:39,2026-03-26,Thursday,21:58:39,Zone A,donut,0.7303,new,False,0.719,ff5c40839d46_0_donut.jpg
+7862ce7f0da5,2026-03-26T22:10:52,2026-03-26,Thursday,22:10:52,Zone A,donut,0.7804,new,False,0.0,7862ce7f0da5_0_donut.jpg
+324a78875e06,2026-03-26T22:11:04,2026-03-26,Thursday,22:11:04,Zone A,donut,0.9356,new,True,1.466,324a78875e06_0_donut.jpg
+66b6037bb7d7,2026-03-26T22:11:12,2026-03-26,Thursday,22:11:12,Zone A,donut,0.8927,new,True,1.52,66b6037bb7d7_0_donut.jpg
+7c6bf40c8cb0,2026-03-26T22:13:36,2026-03-26,Thursday,22:13:36,Zone A,donut,0.7521,new,True,1.193,7c6bf40c8cb0_0_donut.jpg
+88446ddb7cd2,2026-03-26T22:14:33,2026-03-26,Thursday,22:14:33,Zone A,bottle,0.638,new,False,0.0,88446ddb7cd2_0_bottle.jpg
+55c61fb4db91,2026-03-26T22:14:34,2026-03-26,Thursday,22:14:34,Zone A,bottle,0.8617,new,True,2.613,55c61fb4db91_0_bottle.jpg
+62acde14c7bf,2026-03-26T22:14:35,2026-03-26,Thursday,22:14:35,Zone A,bottle,0.6463,new,True,3.031,62acde14c7bf_0_bottle.jpg
+2da2fe6978f9,2026-03-26T22:15:02,2026-03-26,Thursday,22:15:02,Zone A,bottle,0.7442,new,False,0.0,2da2fe6978f9_0_bottle.jpg
