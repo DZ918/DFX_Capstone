@@ -336,6 +336,66 @@ HTML_PAGE = """<!doctype html>
                 font-size: 16px;
                 cursor: pointer;
             }
+            .map-modal {
+                position: fixed;
+                inset: 0;
+                background: rgba(15, 23, 42, 0.86);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                z-index: 1001;
+                padding: 24px;
+            }
+            .map-modal.open { display: flex; }
+            .map-modal-card {
+                position: relative;
+                width: min(1100px, 96vw);
+                max-height: 92vh;
+                background: #0f172a;
+                border: 1px solid rgba(148, 163, 184, 0.35);
+                border-radius: 12px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+                overflow: hidden;
+            }
+            .map-modal-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                padding: 10px 12px;
+                color: #e2e8f0;
+                background: rgba(15, 23, 42, 0.95);
+                border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+                font-size: 13px;
+            }
+            .map-modal-close {
+                border: 0;
+                border-radius: 8px;
+                background: #1e293b;
+                color: #fff;
+                width: 32px;
+                height: 32px;
+                cursor: pointer;
+                font-size: 18px;
+                line-height: 1;
+            }
+            .map-modal-body {
+                padding: 10px;
+                background: #020617;
+            }
+            .map-modal-body img {
+                width: 100%;
+                max-height: calc(92vh - 100px);
+                object-fit: contain;
+                display: block;
+                border-radius: 8px;
+                background: #0b1220;
+            }
+            .map-modal-note {
+                margin-top: 8px;
+                color: #94a3b8;
+                font-size: 12px;
+            }
       @media (max-width: 600px) {
         .settings-row { grid-template-columns: 1fr; }
         .alerts-scroll { height: 58vh; }
@@ -347,6 +407,7 @@ HTML_PAGE = """<!doctype html>
     <header>
       <strong>Lab Food/Drink Monitor</strong>
       <div class=\"header-actions\">
+                <button id=\"openMapBtn\" type=\"button\" aria-expanded=\"false\">Map</button>
         <button id=\"openSettingsBtn\" type=\"button\" aria-expanded=\"false\">Open Settings</button>
       </div>
     </header>
@@ -506,6 +567,18 @@ HTML_PAGE = """<!doctype html>
         <img id=\"lightboxImg\" alt=\"Expanded detection\" />
       </div>
     </div>
+        <div id=\"mapModal\" class=\"map-modal\" aria-hidden=\"true\">
+            <div class=\"map-modal-card\">
+                <div class=\"map-modal-head\">
+                    <strong>DFX Lab Layout</strong>
+                    <button id=\"mapModalClose\" class=\"map-modal-close\" type=\"button\" aria-label=\"Close map\">×</button>
+                </div>
+                <div class=\"map-modal-body\">
+                    <img id=\"mapImage\" alt=\"DFX lab layout map\" />
+                    <div id=\"mapModalNote\" class=\"map-modal-note\"></div>
+                </div>
+            </div>
+        </div>
     <script>
       // Escape user-controlled strings before placing them into HTML templates.
       function escapeHtml(value) {
@@ -516,6 +589,48 @@ HTML_PAGE = """<!doctype html>
           .replaceAll('\"', '&quot;')
           .replaceAll(\"'\", '&#39;');
       }
+
+            // The map modal displays the static DFX lab layout image served by the backend.
+            function setupMapModal() {
+                const openBtn = document.getElementById('openMapBtn');
+                const modal = document.getElementById('mapModal');
+                const closeBtn = document.getElementById('mapModalClose');
+                const img = document.getElementById('mapImage');
+                const note = document.getElementById('mapModalNote');
+
+                function closeModal() {
+                    modal.classList.remove('open');
+                    modal.setAttribute('aria-hidden', 'true');
+                    openBtn.setAttribute('aria-expanded', 'false');
+                }
+
+                function openModal() {
+                    note.textContent = 'Loading map...';
+                    img.src = `/map-image?ts=${Date.now()}`;
+                    modal.classList.add('open');
+                    modal.setAttribute('aria-hidden', 'false');
+                    openBtn.setAttribute('aria-expanded', 'true');
+                }
+
+                img.addEventListener('load', () => {
+                    note.textContent = '';
+                });
+                img.addEventListener('error', () => {
+                    note.textContent = 'Map image not found. Place your file at assets/dfx_lab_map.png and refresh.';
+                });
+                openBtn.addEventListener('click', openModal);
+                closeBtn.addEventListener('click', closeModal);
+                modal.addEventListener('click', (event) => {
+                    if (event.target === modal) {
+                        closeModal();
+                    }
+                });
+                document.addEventListener('keydown', (event) => {
+                    if (event.key === 'Escape' && modal.classList.contains('open')) {
+                        closeModal();
+                    }
+                });
+            }
 
       // Each detection renders as a small card so alerts can show multiple crops at once.
       function renderDetection(det) {
@@ -1044,6 +1159,7 @@ HTML_PAGE = """<!doctype html>
       document.getElementById('groupAlertsByZone').addEventListener('change', () => {
         renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
       });
+            setupMapModal();
       setupLightbox();
       setupSettingsPanel();
       setupSettingsForm();
@@ -1104,6 +1220,8 @@ HANDHELD_FOOD_CLASS_NAMES = {
 MOTION_TRIGGER_SCORE = 0.85
 FOOD_MOTION_MIN_SCORE = 1.0
 FOOD_MOTION_CONFIRM_FRAMES = 3
+FOOD_HAND_TO_MOUTH_EVENT_MIN_SCORE = 1.12
+PROXY_HAND_TO_MOUTH_EVENT_MIN_SCORE = 1.2
 STATIONARY_FOLLOWUP_SECONDS = 30 * 60
 HAND_TO_MOUTH_WINDOW_SECONDS = 30.0
 HAND_TO_MOUTH_REQUIRED_EVENTS = 3
@@ -1123,10 +1241,15 @@ PERSON_PROXY_CONFIRM_FRAMES = 3
 PERSON_PROXY_MIN_CONFIDENCE = 0.25
 ALERT_DETECTION_CONFIDENCE_FLOOR = 0.62
 ALERT_SNIPPET_CONFIDENCE_FLOOR = 0.64
+DEFAULT_MAP_IMAGE_PATH = os.path.join("assets", "dfx_lab_map.png")
 TRAIN_VIDEO_SAMPLE_MAX_FRAMES = 12
 SAME_PERSON_ALERT_WINDOW_SECONDS = 120.0
 SAME_PERSON_MAX_ALERTS_IN_WINDOW = 3
 SAME_PERSON_SUPPRESSION_DISTANCE_RATIO = 0.18
+NEW_OBJECT_LOOKBACK_SECONDS = 45.0
+NEW_OBJECT_MATCH_DISTANCE_RATIO = 0.1
+NEW_OBJECT_MIN_ALERT_GAP_SECONDS = 1.0
+NEW_OBJECT_MIN_CONFIDENCE = 0.68
 
 CAMERA_ZONES = tuple(f"Zone {chr(ord('A') + idx)}" for idx in range(9))
 
@@ -1987,6 +2110,61 @@ def select_alert_person_center(person_detections: list[dict], detections: list[d
     return best
 
 
+def _iter_alert_object_candidates(detections: list[dict]):
+    """Yield class/geometry tuples from detections for novelty checks."""
+    for det in detections:
+        if not isinstance(det, dict):
+            continue
+        class_name = str(det.get("class_name", "")).strip().lower()
+        if not class_name:
+            continue
+        geometry = _extract_detection_geometry(det)
+        if geometry is None:
+            continue
+        try:
+            confidence = float(det.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        x, y, box_diag = geometry
+        yield class_name, confidence, x, y, box_diag
+
+
+def has_novel_alert_object(config, detections: list[dict], frame_diag: float, now_ts: float) -> bool:
+    """Return True when at least one detection is a new object versus recent same-class alerts."""
+    while (
+        config.alert_object_history
+        and (now_ts - float(config.alert_object_history[0][4])) > NEW_OBJECT_LOOKBACK_SECONDS
+    ):
+        config.alert_object_history.popleft()
+
+    for class_name, confidence, x, y, box_diag in _iter_alert_object_candidates(detections):
+        if confidence < NEW_OBJECT_MIN_CONFIDENCE:
+            continue
+        matched = False
+        for prev_class, prev_x, prev_y, prev_diag, _prev_ts in config.alert_object_history:
+            if prev_class != class_name:
+                continue
+            max_dist = max(
+                float(frame_diag) * NEW_OBJECT_MATCH_DISTANCE_RATIO,
+                float(box_diag) * 0.6,
+                float(prev_diag) * 0.6,
+            )
+            if math.hypot(x - float(prev_x), y - float(prev_y)) <= max_dist:
+                matched = True
+                break
+        if not matched:
+            return True
+    return False
+
+
+def remember_alert_objects(config, detections: list[dict], now_ts: float) -> None:
+    """Store recently alerted objects so we can distinguish repeats from genuinely new objects."""
+    for class_name, confidence, x, y, box_diag in _iter_alert_object_candidates(detections):
+        if confidence < ALERT_DETECTION_CONFIDENCE_FLOOR:
+            continue
+        config.alert_object_history.append((class_name, x, y, box_diag, float(now_ts)))
+
+
 def export_accepted_alert_samples(alert: dict, config) -> int:
     """Copy accepted snippets into a YOLO-style dataset and write matching label files."""
     if not isinstance(alert, dict):
@@ -2760,6 +2938,7 @@ class DashboardConfig:
         cooldown,
         clear_frames,
         camera_zone,
+        map_image_path,
         snippet_dir,
         detection_summary_csv,
         inference_imgsz,
@@ -2788,6 +2967,7 @@ class DashboardConfig:
         self.cooldown = cooldown
         self.clear_frames = clear_frames
         self.camera_zone = normalize_camera_zone(camera_zone)
+        self.map_image_path = os.path.abspath(map_image_path)
         self.camera_enabled = True
         self.detection_enabled = True
         self.settings_updated_at = datetime.now().isoformat(timespec="seconds")
@@ -2841,6 +3021,7 @@ class DashboardConfig:
         self.person_proxy_trigger_streak = 0
         self.food_motion_confirm_streak = 0
         self.person_alert_history: deque[tuple[float, float, float]] = deque(maxlen=300)
+        self.alert_object_history: deque[tuple[str, float, float, float, float]] = deque(maxlen=500)
         self.test_mode = test_mode
         self.training_dir = os.path.abspath(training_dir)
         self.training_data_dir = os.path.join(self.training_dir, "dataset")
@@ -2900,6 +3081,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/stats/consumption":
             self._send_consumption_stats()
+            return
+        if parsed.path == "/map-image":
+            self._send_map_image()
             return
         if parsed.path.startswith("/snippets/"):
             self._send_snippet(parsed.path.removeprefix("/snippets/"))
@@ -3120,6 +3304,30 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _send_map_image(self):
+        """Serve the configured DFX lab layout image used by the map modal."""
+        config: DashboardConfig = self.server.config
+        map_path = os.path.abspath(str(config.map_image_path))
+        if not os.path.exists(map_path):
+            self.send_error(HTTPStatus.NOT_FOUND, "Map image not found")
+            return
+        with open(map_path, "rb") as handle:
+            body = handle.read()
+        content_type = "image/png"
+        lower = map_path.lower()
+        if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+            content_type = "image/jpeg"
+        elif lower.endswith(".webp"):
+            content_type = "image/webp"
+        elif lower.endswith(".svg"):
+            content_type = "image/svg+xml"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_video(self, encoded_name: str):
         """Serve one saved alert video clip after validating the filename."""
         config: DashboardConfig = self.server.config
@@ -3293,6 +3501,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.person_proxy_trigger_streak = 0
                 config.food_motion_confirm_streak = 0
                 config.person_alert_history.clear()
+                config.alert_object_history.clear()
                 config.motion_tracks.clear()
                 config.next_motion_track_id = 1
                 last_detections = []
@@ -3460,14 +3669,30 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         motion_detected = False
                         motion_score = 0.0
 
-                    if motion_detected and not config.last_motion_active:
+                    hand_to_mouth_event_active = (
+                        motion_detected
+                        and (
+                            (
+                                motion_source == "food_track"
+                                and bool(detections)
+                                and float(motion_score) >= FOOD_HAND_TO_MOUTH_EVENT_MIN_SCORE
+                            )
+                            or (
+                                motion_source in {"person_proxy", "food_occluded"}
+                                and not bool(detections)
+                                and float(motion_score) >= PROXY_HAND_TO_MOUTH_EVENT_MIN_SCORE
+                            )
+                        )
+                    )
+
+                    if hand_to_mouth_event_active and not config.last_motion_active:
                         config.motion_event_times.append(wall_now)
                     while (
                         config.motion_event_times
                         and (wall_now - config.motion_event_times[0]) > HAND_TO_MOUTH_WINDOW_SECONDS
                     ):
                         config.motion_event_times.popleft()
-                    config.last_motion_active = bool(motion_detected)
+                    config.last_motion_active = bool(hand_to_mouth_event_active)
 
                     last_detections = detections
                     last_motion_detected = motion_detected
@@ -3484,6 +3709,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 config.person_proxy_trigger_streak = 0
                 config.food_motion_confirm_streak = 0
                 config.person_alert_history.clear()
+                config.alert_object_history.clear()
                 last_detections = []
                 last_motion_detected = False
                 last_motion_score = 0.0
@@ -3531,6 +3757,18 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 and config.armed
                 and (wall_now - config.last_alert_ts) >= max(0.0, cooldown)
             )
+            frame_diag = math.hypot(float(frame.shape[1]), float(frame.shape[0]))
+            new_object_trigger = (
+                inference_ran
+                and bool(detections)
+                and (wall_now - config.last_alert_ts) >= NEW_OBJECT_MIN_ALERT_GAP_SECONDS
+                and has_novel_alert_object(
+                    config,
+                    detections,
+                    frame_diag=frame_diag,
+                    now_ts=wall_now,
+                )
+            )
 
             same_person_suppressed = False
             alert_person_center = select_alert_person_center(person_detections, detections)
@@ -3541,7 +3779,6 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     and (wall_now - float(config.person_alert_history[0][2])) > SAME_PERSON_ALERT_WINDOW_SECONDS
                 ):
                     config.person_alert_history.popleft()
-                frame_diag = math.hypot(float(frame.shape[1]), float(frame.shape[0]))
                 suppression_distance = SAME_PERSON_SUPPRESSION_DISTANCE_RATIO * max(1.0, frame_diag)
                 matched_alerts = 0
                 for px, py, pts in config.person_alert_history:
@@ -3554,12 +3791,14 @@ def camera_worker(config: DashboardConfig, cam_index: int):
 
             should_alert = (
                 not same_person_suppressed
-                and (motion_burst_trigger or stationary_followup_trigger or initial_trigger)
+                and (motion_burst_trigger or stationary_followup_trigger or initial_trigger or new_object_trigger)
             )
             if should_alert:
                 reason = "initial"
                 if motion_burst_trigger:
                     reason = "motion_burst"
+                elif new_object_trigger:
+                    reason = "new_object"
                 elif stationary_followup_trigger:
                     reason = "stationary_followup"
                 alert = create_alert(
@@ -3575,7 +3814,10 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     motion_score=motion_score,
                     hand_to_mouth_source=motion_source,
                     hand_to_mouth_event_count=len(config.motion_event_times),
-                    attach_video=motion_burst_trigger,
+                    attach_video=(
+                        motion_burst_trigger
+                        and (bool(detections) or bool(person_detections))
+                    ),
                     alert_reason=reason,
                 )
                 with config.alert_lock:
@@ -3585,6 +3827,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         summary_csv_path=config.detection_summary_csv,
                     )
                 config.last_alert_ts = wall_now
+                remember_alert_objects(config, detections, wall_now)
                 if alert_person_center is not None:
                     config.person_alert_history.append(
                         (
@@ -3598,6 +3841,10 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                     config.motion_event_times.clear()
                 elif stationary_followup_trigger:
                     config.stationary_followup_sent = True
+                elif new_object_trigger:
+                    config.armed = True
+                    config.stationary_first_alert_ts = 0.0
+                    config.stationary_followup_sent = False
                 else:
                     config.armed = False
                     if motion_detected:
@@ -3712,6 +3959,11 @@ def main():
     )
     parser.add_argument("--camera-index", type=int, default=0, help="Camera index")
     parser.add_argument("--camera-zone", default="Zone A", help="Zone label assigned to this camera")
+    parser.add_argument(
+        "--map-image",
+        default=DEFAULT_MAP_IMAGE_PATH,
+        help="Path to DFX lab layout image shown by the Map button",
+    )
     parser.add_argument("--fps", type=int, default=10, help="Stream FPS")
     parser.add_argument("--conf", type=float, default=0.55, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.40, help="IoU threshold")
@@ -3781,6 +4033,7 @@ def main():
         cooldown=args.cooldown,
         clear_frames=args.clear_frames,
         camera_zone=args.camera_zone,
+        map_image_path=args.map_image,
         snippet_dir=args.snippet_dir or None,
         detection_summary_csv=args.detection_summary_csv or None,
         inference_imgsz=args.inference_imgsz,
