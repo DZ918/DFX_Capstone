@@ -998,7 +998,7 @@ HTML_PAGE = """<!doctype html>
                                 const video = alert.video_file
                                         ? `<div class=\"alert-video-wrap\">` +
                                             `<video class=\"alert-video\" controls preload=\"metadata\" playsinline>` +
-                                            `<source src=\"/videos/${encodeURIComponent(alert.video_file)}\" type=\"${escapeHtml(alert.video_mime || 'video/mp4')}\" />` +
+                                            `<source src=\"/videos/${encodeURIComponent(alert.video_file)}\" />` +
                                             `Your browser cannot play this recording.` +
                                             `</video>` +
                                             `<div class=\"det-label\"><a href=\"/videos/${encodeURIComponent(alert.video_file)}\" target=\"_blank\" rel=\"noopener\">Open/download recording</a></div>` +
@@ -2535,11 +2535,14 @@ def add_alert_video(
             capture.release()
         return bool(ok and first_frame is not None and frame_count >= max(2, min_written_frames // 2))
 
-    # Ubuntu/OpenCV builds often log noisy errors for H264 encoders like h264_v4l2m2m.
-    # Prefer browser-friendly codecs first on Linux.
+    # Ubuntu browsers often cannot play MPEG-4 Part 2 (mp4v) streams even in .mp4 files.
+    # Prefer H264/WebM on Linux; if unavailable, skip attachment instead of creating an
+    # unplayable 0:00 clip.
     if platform.system() == "Linux":
         codec_candidates = [
-            ("mp4v", "mp4", "video/mp4"),
+            ("avc1", "mp4", "video/mp4"),
+            ("H264", "mp4", "video/mp4"),
+            ("X264", "mp4", "video/mp4"),
             ("VP80", "webm", "video/webm"),
             ("VP90", "webm", "video/webm"),
         ]
