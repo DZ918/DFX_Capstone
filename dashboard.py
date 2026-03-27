@@ -3401,15 +3401,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.wfile.write(handle.read())
             return
 
-        range_spec = range_header[6:]
+        range_spec = range_header[6:].split(",", 1)[0].strip()
         start_text, _, end_text = range_spec.partition("-")
+        if not _:
+            self.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Invalid range")
+            return
         try:
             if start_text:
                 start = int(start_text)
+                end = int(end_text) if end_text else (file_size - 1)
             else:
                 suffix_len = int(end_text)
+                if suffix_len <= 0:
+                    raise ValueError()
                 start = max(0, file_size - suffix_len)
-            end = int(end_text) if end_text else (file_size - 1)
+                end = file_size - 1
         except ValueError:
             self.send_error(HTTPStatus.REQUESTED_RANGE_NOT_SATISFIABLE, "Invalid range")
             return
