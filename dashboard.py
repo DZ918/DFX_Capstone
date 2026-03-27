@@ -2518,13 +2518,28 @@ def add_alert_video(
         return None
     safe_fps = max(3.0, float(fps or 8.0))
 
+    def _is_usable_alert_video(path: str, min_written_frames: int) -> bool:
+        """Accept only files that are non-trivial and decodable for browser playback."""
+        if not os.path.exists(path):
+            return False
+        # Tiny files are often invalid headers with no real media payload.
+        if os.path.getsize(path) < 4096:
+            return False
+        capture = cv2.VideoCapture(path)
+        if not capture or not capture.isOpened():
+            return False
+        try:
+            frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
+            ok, first_frame = capture.read()
+        finally:
+            capture.release()
+        return bool(ok and first_frame is not None and frame_count >= max(2, min_written_frames // 2))
+
     # Ubuntu/OpenCV builds often log noisy errors for H264 encoders like h264_v4l2m2m.
-    # Prefer widely available software codecs first on Linux.
+    # Prefer browser-friendly codecs first on Linux.
     if platform.system() == "Linux":
         codec_candidates = [
             ("mp4v", "mp4", "video/mp4"),
-            ("MJPG", "avi", "video/x-msvideo"),
-            ("XVID", "avi", "video/x-msvideo"),
             ("VP80", "webm", "video/webm"),
             ("VP90", "webm", "video/webm"),
         ]
@@ -2536,8 +2551,6 @@ def add_alert_video(
             ("VP90", "webm", "video/webm"),
             ("VP80", "webm", "video/webm"),
             ("mp4v", "mp4", "video/mp4"),
-            ("MJPG", "avi", "video/x-msvideo"),
-            ("XVID", "avi", "video/x-msvideo"),
         ]
     for codec, extension, mime in codec_candidates:
         output_name = f"{alert_id}.{extension}"
@@ -2550,6 +2563,7 @@ def add_alert_video(
         )
         if not writer or not writer.isOpened():
             continue
+        written_frames = 0
         try:
             for frame in recent_frames:
                 if frame is None or not hasattr(frame, "shape") or len(frame.shape) < 2:
@@ -2558,10 +2572,21 @@ def add_alert_video(
                 if frame_h != height or frame_w != width:
                     frame = cv2.resize(frame, (width, height))
                 writer.write(frame)
+                written_frames += 1
         finally:
             writer.release()
-        if os.path.exists(output_path) and os.path.getsize(output_path) > 0:
+        if written_frames <= 0:
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+            continue
+        if _is_usable_alert_video(output_path, min_written_frames=written_frames):
             return output_name, mime
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
     return None
 
 
