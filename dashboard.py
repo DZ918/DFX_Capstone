@@ -3006,7 +3006,11 @@ class DashboardConfig:
         self.cooldown = cooldown
         self.clear_frames = clear_frames
         self.camera_zone = normalize_camera_zone(camera_zone)
-        self.map_image_path = os.path.abspath(map_image_path)
+        if os.path.isabs(map_image_path):
+            self.map_image_path = os.path.abspath(map_image_path)
+        else:
+            project_root = os.path.dirname(os.path.abspath(__file__))
+            self.map_image_path = os.path.abspath(os.path.join(project_root, map_image_path))
         self.camera_enabled = True
         self.detection_enabled = True
         self.settings_updated_at = datetime.now().isoformat(timespec="seconds")
@@ -3347,6 +3351,21 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Serve the configured DFX lab layout image used by the map modal."""
         config: DashboardConfig = self.server.config
         map_path = os.path.abspath(str(config.map_image_path))
+        if not os.path.exists(map_path):
+            # Fallback for Linux/case-sensitive filesystems and alternate extensions.
+            root_dir = os.path.dirname(map_path)
+            candidates = [
+                "dfx_lab_map.png",
+                "dfx_lab_map.jpg",
+                "dfx_lab_map.jpeg",
+                "dfx_lab_map.webp",
+                "dfx_lab_map.svg",
+            ]
+            for candidate in candidates:
+                probe = os.path.join(root_dir, candidate)
+                if os.path.exists(probe):
+                    map_path = probe
+                    break
         if not os.path.exists(map_path):
             self.send_error(HTTPStatus.NOT_FOUND, "Map image not found")
             return
