@@ -1,3 +1,7 @@
 {
-  "bottle": 0
+  "banana": 2,
+  "bottle": 0,
+  "cup": 4,
+  "donut": 1,
+  "hot dog": 3
 }
