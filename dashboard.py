@@ -29,9 +29,10 @@ except Exception:
     np = None
 
 try:
-    from ultralytics import YOLO
+    from ultralytics import YOLO, YOLOWorld
 except Exception:
     YOLO = None
+    YOLOWorld = None
 
 
 # The frontend is small enough to keep inline: the Python server exposes JSON and
@@ -1175,6 +1176,28 @@ HTML_PAGE = """<!doctype html>
 """
 
 
+WRAPPER_CLASS_NAMES = {
+    "food wrapper",
+    "candy wrapper",
+    "chocolate bar",
+    "chocolate bar wrapper",
+    "kit kat",
+    "kitkat chocolate bar",
+    "foil wrapped chocolate bar",
+    "potato chip bag",
+    "potato chips bag",
+    "lays bag",
+    "crisp packet",
+    "snack bag",
+    "crinkly plastic snack bag",
+    "shiny snack packaging",
+    "metalized snack bag",
+    "plastic snack packaging",
+    "granola bar wrapper",
+    "gum package",
+    "cellophane candy wrapper",
+}
+
 FOOD_CLASS_NAMES = {
     "apple",
     "banana",
@@ -1191,7 +1214,8 @@ FOOD_CLASS_NAMES = {
     "bowl",
 }
 
-INFERENCE_CLASS_NAMES = set(FOOD_CLASS_NAMES) | {"person"}
+ALERT_CLASS_NAMES = set(FOOD_CLASS_NAMES) | WRAPPER_CLASS_NAMES
+INFERENCE_CLASS_NAMES = set(ALERT_CLASS_NAMES) | {"person"}
 
 CONSUMPTION_CLASS_NAMES = {
     "apple",
@@ -1252,6 +1276,35 @@ NEW_OBJECT_MIN_ALERT_GAP_SECONDS = 1.0
 NEW_OBJECT_MIN_CONFIDENCE = 0.68
 
 CAMERA_ZONES = tuple(f"Zone {chr(ord('A') + idx)}" for idx in range(9))
+
+
+def _is_world_model(model_path: str) -> bool:
+    return "world" in os.path.basename(str(model_path)).lower()
+
+
+def load_inference_model(model_path: str):
+    """Load YOLO model; configure open-vocabulary classes for YOLO-World."""
+    if YOLO is None:
+        raise RuntimeError("ultralytics is required unless --test is used.")
+    if _is_world_model(model_path):
+        fallback_path = os.environ.get("YOLO_FALLBACK_MODEL", "yolov8n.pt")
+        if YOLOWorld is None:
+            print(
+                "Warning: YOLOWorld is unavailable in this ultralytics build. "
+                f"Falling back to {fallback_path}."
+            )
+            return YOLO(fallback_path)
+        try:
+            model = YOLOWorld(model_path)
+        except Exception:
+            print(
+                f"Warning: could not load '{model_path}'. "
+                f"Falling back to {fallback_path}."
+            )
+            return YOLO(fallback_path)
+        model.set_classes(sorted(INFERENCE_CLASS_NAMES))
+        return model
+    return YOLO(model_path)
 
 
 def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
@@ -3669,7 +3722,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                         det
                         for det in all_detections
                         if (
-                            str(det.get("class_name", "")).strip().lower() in FOOD_CLASS_NAMES
+                            str(det.get("class_name", "")).strip().lower() in ALERT_CLASS_NAMES
                             and float(det.get("confidence", 0.0)) >= ALERT_DETECTION_CONFIDENCE_FLOOR
                         )
                     ]
@@ -4081,7 +4134,7 @@ def main():
         if cv2 is None:
             raise RuntimeError("opencv-python is required unless --test is used.")
 
-    model = None if args.test else YOLO(args.model)
+    model = None if args.test else load_inference_model(args.model)
 
     config = DashboardConfig(
         model=model,

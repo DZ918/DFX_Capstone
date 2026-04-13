@@ -8,14 +8,41 @@ import time
 from datetime import datetime
 from uuid import uuid4
 
-import cv2
+from pathlib import Path
 
 try:
-    from ultralytics import YOLO
-except Exception as exc:
-    print("Missing dependency.")
-    raise
+    import cv2
+except Exception:
+    cv2 = None
 
+try:
+    from ultralytics import YOLO, YOLOWorld
+except Exception:
+    YOLO = None
+    YOLOWorld = None
+
+
+WRAPPER_CLASS_NAMES = {
+    "food wrapper",
+    "candy wrapper",
+    "chocolate bar",
+    "chocolate bar wrapper",
+    "kit kat",
+    "kitkat chocolate bar",
+    "foil wrapped chocolate bar",
+    "potato chip bag",
+    "potato chips bag",
+    "lays bag",
+    "crisp packet",
+    "snack bag",
+    "crinkly plastic snack bag",
+    "shiny snack packaging",
+    "metalized snack bag",
+    "plastic snack packaging",
+    "granola bar wrapper",
+    "gum package",
+    "cellophane candy wrapper",
+}
 
 FOOD_CLASS_NAMES = {
     "apple",
@@ -32,6 +59,38 @@ FOOD_CLASS_NAMES = {
     "cup",
     "bowl",
 }
+
+DETECTION_CLASS_NAMES = FOOD_CLASS_NAMES | WRAPPER_CLASS_NAMES
+DEFAULT_WORLD_MODEL = "yolov8m-worldv2.pt"
+
+
+def _is_world_model(model_path: str) -> bool:
+    return "world" in Path(model_path).name.lower()
+
+
+def load_detection_model(model_path: str):
+    """Load standard YOLO or YOLO-World with wrapper prompts."""
+    if YOLO is None:
+        raise RuntimeError("ultralytics is required. Install with: pip install ultralytics")
+    if _is_world_model(model_path):
+        fallback_path = os.environ.get("YOLO_FALLBACK_MODEL", "yolov8n.pt")
+        if YOLOWorld is None:
+            print(
+                "Warning: YOLOWorld is unavailable in this ultralytics build. "
+                f"Falling back to {fallback_path}."
+            )
+            return YOLO(fallback_path)
+        try:
+            model = YOLOWorld(model_path)
+        except Exception:
+            print(
+                f"Warning: could not load '{model_path}'. "
+                f"Falling back to {fallback_path}."
+            )
+            return YOLO(fallback_path)
+        model.set_classes(sorted(DETECTION_CLASS_NAMES))
+        return model
+    return YOLO(model_path)
 
 
 def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
@@ -148,7 +207,7 @@ def run_webcam(
         raise RuntimeError(f"Could not open camera index {cam_index}.")
 
     try:
-        allowed_ids = get_allowed_class_ids(model, FOOD_CLASS_NAMES)
+        allowed_ids = get_allowed_class_ids(model, DETECTION_CLASS_NAMES)
         consecutive = 0
         clear_count = 0
         armed = True
@@ -169,7 +228,7 @@ def run_webcam(
             except TypeError:
                 results = model.predict(frame, verbose=False, conf=conf, iou=iou)
             result = results[0]
-            detections = detections_from_result(result, allowed_names=FOOD_CLASS_NAMES)
+            detections = detections_from_result(result, allowed_names=DETECTION_CLASS_NAMES)
             annotated = frame.copy()
             for det in detections:
                 x1, y1, x2, y2 = (int(v) for v in det["bbox_xyxy"])
@@ -234,14 +293,14 @@ def run_image(model, image_path: str, out_path: str | None) -> None:
     frame = cv2.imread(image_path)
     if frame is None:
         raise RuntimeError(f"Could not read image: {image_path}")
-    allowed_ids = get_allowed_class_ids(model, FOOD_CLASS_NAMES)
+    allowed_ids = get_allowed_class_ids(model, DETECTION_CLASS_NAMES)
     try:
         results = model.predict(
             frame, verbose=False, classes=allowed_ids if allowed_ids else None
         )
     except TypeError:
         results = model.predict(frame, verbose=False)
-    detections = detections_from_result(results[0], allowed_names=FOOD_CLASS_NAMES)
+    detections = detections_from_result(results[0], allowed_names=DETECTION_CLASS_NAMES)
     annotated = frame.copy()
     for det in detections:
         x1, y1, x2, y2 = (int(v) for v in det["bbox_xyxy"])
@@ -268,11 +327,15 @@ def run_image(model, image_path: str, out_path: str | None) -> None:
 def main() -> int:
     """Parse CLI arguments, load the model, and dispatch to image or webcam mode."""
     parser = argparse.ArgumentParser(description="Quick OpenCV + YOLO demo")
-    parser.add_argument("--model", default="yolov8n.pt", help="Path to YOLO model weights")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_WORLD_MODEL,
+        help="Path to model weights (YOLO-World recommended for wrapper detection)",
+    )
     parser.add_argument("--image", help="Path to image for single-image demo")
     parser.add_argument("--out", help="Output path for annotated image")
     parser.add_argument("--cam", type=int, default=0, help="Camera index for webcam demo")
-    parser.add_argument("--conf", type=float, default=0.55, help="Confidence threshold")
+    parser.add_argument("--conf", type=float, default=0.12, help="Confidence threshold")
     parser.add_argument("--iou", type=float, default=0.40, help="IoU threshold")
     parser.add_argument(
         "--persist-frames",
@@ -303,8 +366,10 @@ def main() -> int:
         help="Directory where per-detection crop images are stored (set empty to disable)",
     )
     args = parser.parse_args()
+    if cv2 is None:
+        raise RuntimeError("opencv-python is required. Install with: pip install opencv-python")
 
-    model = YOLO(args.model)
+    model = load_detection_model(args.model)
 
     if args.image:
         run_image(model, args.image, args.out)
