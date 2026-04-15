@@ -88,7 +88,68 @@ HTML_PAGE = """<!doctype html>
       .card { background: var(--card); border-radius: 12px; box-shadow: 0 10px 28px rgba(17,24,39,0.12); padding: 12px; }
       .settings-card { grid-column: 1 / -1; }
       .hidden { display: none !important; }
+            .feed-wrap { display: grid; gap: 10px; }
+            .feed-stage {
+                position: relative;
+                width: 100%;
+                border-radius: 8px;
+                overflow: hidden;
+                background: #000;
+            }
       .feed { width: 100%; border-radius: 8px; background: #000; }
+            .feed-annotator {
+                position: absolute;
+                inset: 0;
+                width: 100%;
+                height: 100%;
+                z-index: 2;
+                display: none;
+            }
+            .feed-annotator.active {
+                display: block;
+                cursor: crosshair;
+            }
+            .capture-tools {
+                display: grid;
+                gap: 8px;
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                background: #f8fafc;
+                padding: 10px;
+            }
+            .capture-row {
+                display: grid;
+                grid-template-columns: 1fr auto auto auto;
+                gap: 8px;
+                align-items: center;
+            }
+            .capture-row input {
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                padding: 7px 8px;
+                font-size: 13px;
+            }
+            .capture-row button {
+                border: 0;
+                border-radius: 8px;
+                padding: 7px 10px;
+                font-size: 12px;
+                color: #fff;
+                background: #1f2937;
+                cursor: pointer;
+            }
+            .capture-row button.alt {
+                background: #4b5563;
+            }
+            .capture-help {
+                font-size: 12px;
+                color: #475569;
+            }
+            .capture-status {
+                min-height: 16px;
+                font-size: 12px;
+                color: #1f2937;
+            }
       h2 { margin: 8px 0 12px; font-size: 16px; }
       .alerts-card { display: flex; flex-direction: column; }
       .alerts-toolbar {
@@ -399,6 +460,7 @@ HTML_PAGE = """<!doctype html>
             }
       @media (max-width: 600px) {
         .settings-row { grid-template-columns: 1fr; }
+                .capture-row { grid-template-columns: 1fr; }
         .alerts-scroll { height: 58vh; }
       }
       @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
@@ -512,7 +574,22 @@ HTML_PAGE = """<!doctype html>
       </section>
       <section class=\"card\">
         <h2>Live Camera Feed</h2>
-        <img class=\"feed\" src=\"/stream\" alt=\"Live camera feed\" />
+                <div class=\"feed-wrap\">
+                    <div class=\"feed-stage\">
+                        <img id=\"liveFeed\" class=\"feed\" src=\"/stream\" alt=\"Live camera feed\" />
+                        <canvas id=\"manualBoxCanvas\" class=\"feed-annotator\" aria-hidden=\"true\"></canvas>
+                    </div>
+                    <div class=\"capture-tools\">
+                        <div class=\"capture-row\">
+                            <input id=\"manualClassName\" type=\"text\" placeholder=\"Class name (example: fork, sandwich_box)\" />
+                            <button id=\"manualAnnotateBtn\" type=\"button\">Draw Box</button>
+                            <button id=\"manualClearBtn\" type=\"button\" class=\"alt\">Clear</button>
+                            <button id=\"manualSaveBtn\" type=\"button\">Save Sample</button>
+                        </div>
+                        <div class=\"capture-help\">Use Draw Box, drag on the live feed around the missed object, then Save Sample.</div>
+                        <div id=\"manualCaptureStatus\" class=\"capture-status\"></div>
+                    </div>
+                </div>
       </section>
       <section class=\"card alerts-card\">
         <h2>Recent Alerts</h2>
@@ -1157,6 +1234,194 @@ HTML_PAGE = """<!doctype html>
                 }
             }
 
+            function setupManualCapture() {
+                const feed = document.getElementById('liveFeed');
+                const canvas = document.getElementById('manualBoxCanvas');
+                const annotateBtn = document.getElementById('manualAnnotateBtn');
+                const clearBtn = document.getElementById('manualClearBtn');
+                const saveBtn = document.getElementById('manualSaveBtn');
+                const classInput = document.getElementById('manualClassName');
+                const statusEl = document.getElementById('manualCaptureStatus');
+                const ctx = canvas.getContext('2d');
+
+                let annotateMode = false;
+                let dragStart = null;
+                let draftBox = null;
+                let finalBox = null;
+
+                function setStatus(message, isError = false) {
+                    statusEl.textContent = message || '';
+                    statusEl.style.color = isError ? '#b91c1c' : '#1f2937';
+                }
+
+                function syncCanvasSize() {
+                    const width = Math.max(1, Math.round(feed.clientWidth || 1));
+                    const height = Math.max(1, Math.round(feed.clientHeight || 1));
+                    if (canvas.width !== width || canvas.height !== height) {
+                        canvas.width = width;
+                        canvas.height = height;
+                    }
+                    draw();
+                }
+
+                function pointFromEvent(event) {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = Math.max(0, Math.min(rect.width, event.clientX - rect.left));
+                    const y = Math.max(0, Math.min(rect.height, event.clientY - rect.top));
+                    return { x, y };
+                }
+
+                function normalizedBox(rawBox) {
+                    if (!rawBox) {
+                        return null;
+                    }
+                    const left = Math.max(0, Math.min(canvas.width, Math.min(rawBox.x1, rawBox.x2)));
+                    const right = Math.max(0, Math.min(canvas.width, Math.max(rawBox.x1, rawBox.x2)));
+                    const top = Math.max(0, Math.min(canvas.height, Math.min(rawBox.y1, rawBox.y2)));
+                    const bottom = Math.max(0, Math.min(canvas.height, Math.max(rawBox.y1, rawBox.y2)));
+                    const boxWidth = right - left;
+                    const boxHeight = bottom - top;
+                    if (boxWidth < 4 || boxHeight < 4 || canvas.width <= 1 || canvas.height <= 1) {
+                        return null;
+                    }
+                    const cx = ((left + right) * 0.5) / canvas.width;
+                    const cy = ((top + bottom) * 0.5) / canvas.height;
+                    const bw = boxWidth / canvas.width;
+                    const bh = boxHeight / canvas.height;
+                    return [cx, cy, bw, bh];
+                }
+
+                function drawBox(box, color) {
+                    if (!box) {
+                        return;
+                    }
+                    const left = Math.min(box.x1, box.x2);
+                    const top = Math.min(box.y1, box.y2);
+                    const width = Math.abs(box.x2 - box.x1);
+                    const height = Math.abs(box.y2 - box.y1);
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(left, top, width, height);
+                }
+
+                function draw() {
+                    ctx.clearRect(0, 0, canvas.width, canvas.height);
+                    drawBox(finalBox, '#22c55e');
+                    drawBox(draftBox, '#f59e0b');
+                }
+
+                function clearBoxes() {
+                    dragStart = null;
+                    draftBox = null;
+                    finalBox = null;
+                    draw();
+                }
+
+                function setAnnotateMode(enabled) {
+                    annotateMode = Boolean(enabled);
+                    canvas.classList.toggle('active', annotateMode);
+                    annotateBtn.textContent = annotateMode ? 'Cancel Draw' : 'Draw Box';
+                    if (!annotateMode) {
+                        dragStart = null;
+                        draftBox = null;
+                        draw();
+                    }
+                }
+
+                annotateBtn.addEventListener('click', () => {
+                    syncCanvasSize();
+                    setAnnotateMode(!annotateMode);
+                    if (annotateMode) {
+                        setStatus('Drag on the feed to draw a box.');
+                    }
+                });
+
+                clearBtn.addEventListener('click', () => {
+                    clearBoxes();
+                    setStatus('Box cleared.');
+                });
+
+                canvas.addEventListener('mousedown', (event) => {
+                    if (!annotateMode) {
+                        return;
+                    }
+                    syncCanvasSize();
+                    const p = pointFromEvent(event);
+                    dragStart = p;
+                    draftBox = { x1: p.x, y1: p.y, x2: p.x, y2: p.y };
+                    draw();
+                });
+
+                canvas.addEventListener('mousemove', (event) => {
+                    if (!annotateMode || !dragStart) {
+                        return;
+                    }
+                    const p = pointFromEvent(event);
+                    draftBox = { x1: dragStart.x, y1: dragStart.y, x2: p.x, y2: p.y };
+                    draw();
+                });
+
+                canvas.addEventListener('mouseup', () => {
+                    if (!annotateMode || !draftBox) {
+                        return;
+                    }
+                    finalBox = draftBox;
+                    draftBox = null;
+                    dragStart = null;
+                    draw();
+                    setAnnotateMode(false);
+                    setStatus('Box ready. Click Save Sample to export training data.');
+                });
+
+                canvas.addEventListener('mouseleave', () => {
+                    if (!annotateMode || !dragStart) {
+                        return;
+                    }
+                    draftBox = null;
+                    dragStart = null;
+                    draw();
+                });
+
+                saveBtn.addEventListener('click', async () => {
+                    const className = String(classInput.value || '').trim().toLowerCase();
+                    const normalized = normalizedBox(finalBox);
+                    if (!className) {
+                        setStatus('Enter a class name first.', true);
+                        return;
+                    }
+                    if (!normalized) {
+                        setStatus('Draw a valid box before saving.', true);
+                        return;
+                    }
+                    saveBtn.disabled = true;
+                    try {
+                        const res = await fetch('/train/manual-capture', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                class_name: className,
+                                bbox_xywhn: normalized,
+                            }),
+                        });
+                        if (!res.ok) {
+                            const text = await res.text();
+                            throw new Error(text || `HTTP ${res.status}`);
+                        }
+                        const payload = await res.json();
+                        setStatus(`Saved ${payload.image_file || 'sample'} for class '${className}'.`);
+                        clearBoxes();
+                    } catch (err) {
+                        setStatus(err.message || 'Could not save manual sample.', true);
+                    } finally {
+                        saveBtn.disabled = false;
+                    }
+                });
+
+                feed.addEventListener('load', syncCanvasSize);
+                window.addEventListener('resize', syncCanvasSize);
+                setTimeout(syncCanvasSize, 250);
+            }
+
       document.getElementById('groupAlertsByZone').addEventListener('change', () => {
         renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
       });
@@ -1164,6 +1429,7 @@ HTML_PAGE = """<!doctype html>
       setupLightbox();
       setupSettingsPanel();
       setupSettingsForm();
+    setupManualCapture();
       refreshAlerts();
     refreshConsumptionStats();
       refreshTrainStatus();
@@ -2306,6 +2572,113 @@ def export_rejected_alert_samples(alert: dict, config) -> int:
     return exported
 
 
+def save_manual_training_sample(config, class_name: str, bbox_xywhn: list[float]) -> dict:
+    """Save one manually boxed frame into the YOLO dataset for missed objects."""
+    if cv2 is None:
+        raise RuntimeError("OpenCV is required for manual capture")
+    normalized_class = str(class_name or "").strip().lower()
+    if not normalized_class:
+        raise ValueError("class_name is required")
+    if not isinstance(bbox_xywhn, (list, tuple)) or len(bbox_xywhn) != 4:
+        raise ValueError("bbox_xywhn must contain 4 numbers")
+    try:
+        cx, cy, bw, bh = (float(v) for v in bbox_xywhn)
+    except (TypeError, ValueError):
+        raise ValueError("bbox_xywhn must contain only numbers") from None
+    cx = max(0.0, min(1.0, cx))
+    cy = max(0.0, min(1.0, cy))
+    bw = max(0.0, min(1.0, bw))
+    bh = max(0.0, min(1.0, bh))
+    if bw <= 0.0 or bh <= 0.0:
+        raise ValueError("bbox_xywhn width and height must be greater than 0")
+
+    with config.frame_lock:
+        frame = None if config.latest_raw_frame is None else config.latest_raw_frame.copy()
+    if frame is None:
+        raise RuntimeError("No live camera frame available yet")
+
+    frame_height, frame_width = frame.shape[:2]
+    if frame_width <= 1 or frame_height <= 1:
+        raise RuntimeError("Current frame is invalid for manual capture")
+
+    left = int(round((cx - (bw * 0.5)) * frame_width))
+    right = int(round((cx + (bw * 0.5)) * frame_width))
+    top = int(round((cy - (bh * 0.5)) * frame_height))
+    bottom = int(round((cy + (bh * 0.5)) * frame_height))
+
+    left = max(0, min(frame_width - 1, left))
+    top = max(0, min(frame_height - 1, top))
+    right = max(left + 1, min(frame_width, right))
+    bottom = max(top + 1, min(frame_height, bottom))
+
+    box_width = max(1, right - left)
+    box_height = max(1, bottom - top)
+    margin_x = max(12, int(box_width * 0.2))
+    margin_y = max(12, int(box_height * 0.2))
+
+    crop_left = max(0, left - margin_x)
+    crop_top = max(0, top - margin_y)
+    crop_right = min(frame_width, right + margin_x)
+    crop_bottom = min(frame_height, bottom + margin_y)
+
+    crop = frame[crop_top:crop_bottom, crop_left:crop_right].copy()
+    if crop.size == 0:
+        raise RuntimeError("Could not crop manual sample from current frame")
+
+    local_left = max(0, left - crop_left)
+    local_top = max(0, top - crop_top)
+    local_right = max(local_left + 1, right - crop_left)
+    local_bottom = max(local_top + 1, bottom - crop_top)
+    cv2.rectangle(crop, (local_left, local_top), (local_right, local_bottom), (0, 180, 255), 2)
+    cv2.putText(
+        crop,
+        normalized_class,
+        (local_left, max(16, local_top - 8)),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 180, 255),
+        2,
+    )
+
+    crop_height, crop_width = crop.shape[:2]
+    label_cx = ((local_left + local_right) * 0.5) / max(1.0, float(crop_width))
+    label_cy = ((local_top + local_bottom) * 0.5) / max(1.0, float(crop_height))
+    label_bw = (local_right - local_left) / max(1.0, float(crop_width))
+    label_bh = (local_bottom - local_top) / max(1.0, float(crop_height))
+
+    os.makedirs(config.training_images_dir, exist_ok=True)
+    os.makedirs(config.training_labels_dir, exist_ok=True)
+    class_map = read_class_map(config.class_map_path)
+    if normalized_class not in class_map:
+        class_map[normalized_class] = len(class_map)
+    class_id = int(class_map[normalized_class])
+
+    sample_stem = (
+        f"manual_{datetime.now().strftime('%Y%m%d_%H%M%S')}_"
+        f"{uuid4().hex[:6]}_{_safe_token(normalized_class)}"
+    )
+    image_file = f"{sample_stem}.jpg"
+    label_file = f"{sample_stem}.txt"
+    image_path = os.path.join(config.training_images_dir, image_file)
+    label_path = os.path.join(config.training_labels_dir, label_file)
+
+    if not cv2.imwrite(image_path, crop):
+        raise RuntimeError("Could not write training image")
+    with open(label_path, "w", encoding="utf-8") as label_handle:
+        label_handle.write(
+            f"{class_id} {label_cx:.6f} {label_cy:.6f} {label_bw:.6f} {label_bh:.6f}\n"
+        )
+
+    write_class_map(config.class_map_path, class_map)
+    update_dataset_yaml(config, class_map)
+    return {
+        "class_name": normalized_class,
+        "class_id": class_id,
+        "image_file": image_file,
+        "label_file": label_file,
+    }
+
+
 def training_status_snapshot(config) -> dict:
     """Expose the last-known training state for the dashboard polling endpoint."""
     with config.training_lock:
@@ -3076,6 +3449,7 @@ class DashboardConfig:
         )
         self.latest_frame = None
         self.latest_jpeg = None
+        self.latest_raw_frame = None
         self.frame_lock = threading.Lock()
         self.alert_lock = threading.Lock()
         self.settings_lock = threading.Lock()
@@ -3205,6 +3579,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/train/accepted":
             self._trigger_train_accepted()
+            return
+        if parsed.path == "/train/manual-capture":
+            self._capture_manual_training_sample()
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -3366,6 +3743,25 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.CONFLICT, "Training is already running")
             return
         self._send_json({"ok": True, "started": True}, HTTPStatus.ACCEPTED)
+
+    def _capture_manual_training_sample(self):
+        """Save one manually drawn bounding box from the current camera frame."""
+        config: DashboardConfig = self.server.config
+        if config.test_mode:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Manual capture is disabled in --test mode")
+            return
+        try:
+            payload = self._read_json_body()
+            class_name = payload.get("class_name", "")
+            bbox_xywhn = payload.get("bbox_xywhn", [])
+            sample = save_manual_training_sample(config, class_name, bbox_xywhn)
+        except ValueError as exc:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        except RuntimeError as exc:
+            self.send_error(HTTPStatus.CONFLICT, str(exc))
+            return
+        self._send_json({"ok": True, **sample}, HTTPStatus.CREATED)
 
     def _send_snippet(self, encoded_name: str):
         """Serve one saved detection crop after validating the requested filename."""
@@ -3629,6 +4025,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 if paused is not None:
                     ok, encoded = cv2.imencode(".jpg", paused, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
                     with config.frame_lock:
+                        config.latest_raw_frame = None
                         config.latest_frame = paused
                         config.latest_jpeg = encoded.tobytes() if ok else None
                 time.sleep(0.15)
@@ -3660,6 +4057,7 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                             [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality],
                         )
                         with config.frame_lock:
+                            config.latest_raw_frame = None
                             config.latest_frame = unavailable
                             config.latest_jpeg = encoded.tobytes() if ok else None
                     time.sleep(1.0)
@@ -3678,6 +4076,9 @@ def camera_worker(config: DashboardConfig, cam_index: int):
                 recent_frames.clear()
                 time.sleep(0.1)
                 continue
+
+            with config.frame_lock:
+                config.latest_raw_frame = frame.copy()
 
             recent_frames.append(frame.copy())
 
