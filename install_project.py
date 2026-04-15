@@ -68,7 +68,152 @@ def install_requirements(python_path: Path, requirements_path: Path) -> None:
     run([str(python_path), "-m", "pip", "install", "-r", str(requirements_path)])
 
 
-def ensure_runtime_layout(project_root: Path) -> None:
+def install_cuda_pytorch(python_path: Path) -> None:
+    """Install CUDA-enabled PyTorch on Jetson (aarch64 Linux) from NVIDIA's index.
+
+    On non-Jetson platforms this is a no-op; the generic PyTorch from
+    requirements.txt is used instead.
+    """
+    import platform
+
+    if platform.machine() != "aarch64" or platform.system() != "Linux":
+        log("[install] Not a Jetson/aarch64 platform, skipping CUDA PyTorch install")
+        return
+    # Check for the Jetson-specific kernel suffix.
+    if "tegra" not in platform.release():
+        log("[install] Kernel does not look like Jetson (no -tegra), skipping CUDA PyTorch")
+        return
+    nvidia_index = "https://developer.download.nvidia.com/compute/redist/jp/v60"
+    log("[install] Installing CUDA-enabled PyTorch for Jetson from NVIDIA index")
+    try:
+        run(
+            [
+                str(python_path),
+                "-m",
+                "pip",
+                "install",
+                "--upgrade",
+                f"--extra-index-url={nvidia_index}",
+                "torch",
+                "torchvision",
+            ]
+        )
+    except subprocess.CalledProcessError:
+        log(
+            "[install] WARNING: CUDA PyTorch install failed. "
+            "Inference will fall back to CPU. You can install manually from "
+            "https://forums.developer.nvidia.com/t/pytorch-for-jetson/"
+        )
+
+
+def rebuild_torchvision_for_jetson(python_path: Path) -> None:
+    """Rebuild torchvision from source to ensure compatibility with Jetson torch.
+
+    Pre-built wheels often have incompatibilities. Building from source ensures
+    the version matches the installed torch correctly.
+    """
+    import platform
+    import tempfile
+
+    if platform.machine() != "aarch64" or platform.system() != "Linux":
+        return
+    if "tegra" not in platform.release():
+        return
+
+    log("[install] Rebuilding torchvision from source for Jetson compatibility")
+    try:
+        # Remove pre-built torchvision to avoid conflicts
+        run([str(python_path), "-m", "pip", "uninstall", "torchvision", "-y"])
+
+        # Download and build from source
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            run(
+                [
+                    "git",
+                    "clone",
+                    "--branch",
+                    "v0.20.0",
+                    "--depth",
+                    "1",
+                    "https://github.com/pytorch/vision.git",
+                    str(tmp_path / "vision"),
+                ]
+            )
+            # Build torchvision with CUDA support
+            env = os.environ.copy()
+            env["FORCE_CUDA"] = "1"
+            run(
+                [str(python_path), "-m", "pip", "install", "--no-deps", "--no-build-isolation", "."],
+                cwd=tmp_path / "vision",
+            )
+    except subprocess.CalledProcessError as exc:
+        log(f"[install] WARNING: Building torchvision from source failed: {exc}")
+        log("[install] Attempting to reinstall pre-built torchvision")
+        try:
+            run([str(python_path), "-m", "pip", "install", "torchvision"])
+        except subprocess.CalledProcessError:
+            log(
+                "[install] ERROR: Could not install torchvision. "
+                "You may need to build it manually from "
+                "https://github.com/pytorch/vision"
+            )
+
+
+def ensure_jetson_gpu_env(project_root: Path) -> None:
+    """Create wrapper scripts for Jetson GPU support.
+
+    Creates helper scripts that ensure LD_LIBRARY_PATH is set before running the app.
+    """
+    import platform
+
+    if platform.machine() != "aarch64" or platform.system() != "Linux":
+        return
+    if "tegra" not in platform.release():
+        return
+
+    gpu_lib_path = "/home/user/.local/lib/python3.10/site-packages/cusparselt/lib"
+    system_lib_path = "/home/user/.local/lib"
+
+    # Create wrapper script for main.py
+    main_wrapper = project_root / "run_main.sh"
+    main_wrapper.write_text(
+        f"""#!/bin/bash
+export LD_LIBRARY_PATH="{gpu_lib_path}:{system_lib_path}:${{LD_LIBRARY_PATH:-}}"
+exec python3 main.py "$@"
+""",
+        encoding="utf-8",
+    )
+    main_wrapper.chmod(0o755)
+    log(f"[install] Created GPU wrapper script: {main_wrapper}")
+
+    # Create wrapper script for dashboard.py
+    dashboard_wrapper = project_root / "run_dashboard.sh"
+    dashboard_wrapper.write_text(
+        f"""#!/bin/bash
+export LD_LIBRARY_PATH="{gpu_lib_path}:{system_lib_path}:${{LD_LIBRARY_PATH:-}}"
+exec python3 dashboard.py "$@"
+""",
+        encoding="utf-8",
+    )
+    dashboard_wrapper.chmod(0o755)
+    log(f"[install] Created GPU wrapper script: {dashboard_wrapper}")
+
+    # Update .bashrc to set LD_LIBRARY_PATH for interactive shells
+    bashrc_path = Path.home() / ".bashrc"
+    if bashrc_path.exists():
+        bashrc_content = bashrc_path.read_text(encoding="utf-8")
+        marker = "# NVIDIA cusparseLt for PyTorch on Jetson"
+        if marker not in bashrc_content:
+            bashrc_content += f"""
+{marker}
+export LD_LIBRARY_PATH="{gpu_lib_path}:{system_lib_path}:${{LD_LIBRARY_PATH:-}}"
+"""
+            try:
+                bashrc_path.write_text(bashrc_content, encoding="utf-8")
+                log(f"[install] Updated ~/.bashrc with LD_LIBRARY_PATH for Jetson GPU")
+            except Exception as exc:
+                log(f"[install] WARNING: Could not update ~/.bashrc: {exc}")
     for relative_dir in (
         "snippets",
         "training_data",
@@ -170,6 +315,9 @@ def main() -> int:
 
     python_path = create_venv(venv_dir)
     install_requirements(python_path, requirements_path)
+    install_cuda_pytorch(python_path)
+    rebuild_torchvision_for_jetson(python_path)
+    ensure_jetson_gpu_env(project_root)
     ensure_runtime_layout(project_root)
     if not args.skip_model_download:
         maybe_download_model(project_root, python_path, args.model)

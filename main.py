@@ -10,6 +10,19 @@ from uuid import uuid4
 
 from pathlib import Path
 
+# Ensure Jetson GPU libraries are available before any imports
+import platform
+if platform.machine() == "aarch64" and platform.system() == "Linux" and "tegra" in platform.release():
+    gpu_lib_paths = [
+        "/home/user/.local/lib/python3.10/site-packages/cusparselt/lib",
+        "/home/user/.local/lib/python3.10/site-packages/nvidia/cusparselt/lib",
+        "/home/user/.local/lib",
+    ]
+    current_ld_path = os.environ.get("LD_LIBRARY_PATH", "")
+    new_paths = [p for p in gpu_lib_paths if p and os.path.isdir(p)]
+    if new_paths:
+        os.environ["LD_LIBRARY_PATH"] = ":".join(new_paths) + (":" + current_ld_path if current_ld_path else "")
+
 try:
     import cv2
 except Exception:
