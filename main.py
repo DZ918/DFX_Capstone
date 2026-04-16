@@ -10,27 +10,20 @@ from uuid import uuid4
 
 from pathlib import Path
 
-# Ensure Jetson GPU libraries are available before any imports
-import platform
-if platform.machine() == "aarch64" and platform.system() == "Linux" and "tegra" in platform.release():
-    gpu_lib_paths = [
-        "/home/user/.local/lib/python3.10/site-packages/cusparselt/lib",
-        "/home/user/.local/lib/python3.10/site-packages/nvidia/cusparselt/lib",
-        "/home/user/.local/lib",
-    ]
-    current_ld_path = os.environ.get("LD_LIBRARY_PATH", "")
-    new_paths = [p for p in gpu_lib_paths if p and os.path.isdir(p)]
-    if new_paths:
-        os.environ["LD_LIBRARY_PATH"] = ":".join(new_paths) + (":" + current_ld_path if current_ld_path else "")
+from dfx.gpu import configure_jetson_gpu_env, predict_with_fallback, prepare_model_for_inference
+
+configure_jetson_gpu_env()
 
 try:
     import cv2
-except Exception:
+except Exception as exc:
+    print(f"Warning: cv2 import failed: {exc}")
     cv2 = None
 
 try:
     from ultralytics import YOLO, YOLOWorld
-except Exception:
+except Exception as exc:
+    print(f"Warning: ultralytics import failed: {exc}")
     YOLO = None
     YOLOWorld = None
 
@@ -74,7 +67,7 @@ FOOD_CLASS_NAMES = {
 }
 
 DETECTION_CLASS_NAMES = FOOD_CLASS_NAMES | WRAPPER_CLASS_NAMES
-DEFAULT_WORLD_MODEL = "yolov8m-worldv2.pt"
+DEFAULT_WORLD_MODEL = "yolov8n.pt"
 
 
 def _is_world_model(model_path: str) -> bool:
@@ -205,6 +198,7 @@ def detections_from_result(result, allowed_names: set[str] | None = None) -> lis
 
 def run_webcam(
     model,
+    device: str,
     cam_index: int,
     conf: float,
     iou: float,
@@ -230,16 +224,15 @@ def run_webcam(
             if not ok:
                 break
             # Some Ultralytics versions support a `classes` filter directly; older ones do not.
-            try:
-                results = model.predict(
-                    frame,
-                    verbose=False,
-                    conf=conf,
-                    iou=iou,
-                    classes=allowed_ids if allowed_ids else None,
-                )
-            except TypeError:
-                results = model.predict(frame, verbose=False, conf=conf, iou=iou)
+            results = predict_with_fallback(
+                model,
+                frame,
+                verbose=False,
+                conf=conf,
+                iou=iou,
+                classes=allowed_ids if allowed_ids else None,
+                device=device,
+            )
             result = results[0]
             detections = detections_from_result(result, allowed_names=DETECTION_CLASS_NAMES)
             annotated = frame.copy()
@@ -301,18 +294,19 @@ def run_webcam(
         cv2.destroyAllWindows()
 
 
-def run_image(model, image_path: str, out_path: str | None) -> None:
+def run_image(model, image_path: str, out_path: str | None, device: str) -> None:
     """Run detection once on a still image and either save or preview the result."""
     frame = cv2.imread(image_path)
     if frame is None:
         raise RuntimeError(f"Could not read image: {image_path}")
     allowed_ids = get_allowed_class_ids(model, DETECTION_CLASS_NAMES)
-    try:
-        results = model.predict(
-            frame, verbose=False, classes=allowed_ids if allowed_ids else None
-        )
-    except TypeError:
-        results = model.predict(frame, verbose=False)
+    results = predict_with_fallback(
+        model,
+        frame,
+        verbose=False,
+        classes=allowed_ids if allowed_ids else None,
+        device=device,
+    )
     detections = detections_from_result(results[0], allowed_names=DETECTION_CLASS_NAMES)
     annotated = frame.copy()
     for det in detections:
@@ -383,13 +377,16 @@ def main() -> int:
         raise RuntimeError("opencv-python is required. Install with: pip install opencv-python")
 
     model = load_detection_model(args.model)
+    inference_device = prepare_model_for_inference(model)
+    print(f"Using inference device: {inference_device}")
 
     if args.image:
-        run_image(model, args.image, args.out)
+        run_image(model, args.image, args.out, inference_device)
     else:
         alert_log = args.alert_log or None
         run_webcam(
             model,
+            inference_device,
             args.cam,
             conf=args.conf,
             iou=args.iou,

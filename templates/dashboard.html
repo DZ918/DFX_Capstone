@@ -1,0 +1,1136 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Lab Food/Drink Monitor</title>
+    <style>
+      :root {
+        --bg: #f4f6fb;
+        --card: #ffffff;
+        --text: #111827;
+        --muted: #6b7280;
+        --border: #e5e7eb;
+        --new-bg: #fee2e2;
+        --new-fg: #991b1b;
+        --accepted-bg: #dcfce7;
+        --accepted-fg: #166534;
+        --btn: #1f2937;
+        --btn-hover: #111827;
+      }
+      body { font-family: ui-sans-serif, system-ui, -apple-system, sans-serif; margin: 0; background: var(--bg); color: var(--text); }
+      header {
+        padding: 16px 20px;
+        background: #111827;
+        color: #fff;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .header-actions button {
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        border-radius: 8px;
+        background: rgba(255, 255, 255, 0.14);
+        color: #fff;
+        font-size: 12px;
+        padding: 6px 10px;
+        cursor: pointer;
+      }
+      .header-actions button:hover {
+        background: rgba(255, 255, 255, 0.24);
+      }
+      main { display: grid; grid-template-columns: 1.8fr 1fr; gap: 16px; padding: 16px; align-items: start; }
+      .card { background: var(--card); border-radius: 12px; box-shadow: 0 10px 28px rgba(17,24,39,0.12); padding: 12px; }
+      .settings-card { grid-column: 1 / -1; }
+      .hidden { display: none !important; }
+      .feed { width: 100%; border-radius: 8px; background: #000; }
+      h2 { margin: 8px 0 12px; font-size: 16px; }
+      .alerts-card { display: flex; flex-direction: column; }
+      .alerts-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .alerts-toolbar label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 12px;
+        color: #374151;
+      }
+            .backend-stats {
+                border: 1px solid var(--border);
+                border-radius: 10px;
+                background: #f8fafc;
+                margin-bottom: 10px;
+                overflow: hidden;
+            }
+            .stats-total {
+                padding: 10px;
+                border-bottom: 1px solid var(--border);
+                font-size: 13px;
+                color: #1f2937;
+            }
+            .stats-total strong {
+                font-size: 16px;
+                color: #0f172a;
+            }
+            .stats-table-wrap {
+                max-height: 190px;
+                overflow-y: auto;
+            }
+            .stats-table {
+                width: 100%;
+                border-collapse: collapse;
+            }
+            .stats-table th,
+            .stats-table td {
+                border-bottom: 1px solid var(--border);
+                padding: 7px 10px;
+                font-size: 12px;
+                text-align: left;
+            }
+            .stats-table th {
+                background: #f1f5f9;
+                color: #334155;
+            }
+            .stats-table td:last-child,
+            .stats-table th:last-child {
+                text-align: right;
+            }
+            .stats-updated {
+                padding: 8px 10px;
+                font-size: 11px;
+                color: #64748b;
+            }
+      .alerts-scroll {
+        height: min(68vh, 760px);
+        overflow-y: auto;
+        padding-right: 4px;
+      }
+      .alerts-list { display: grid; gap: 10px; }
+      .alert { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: #fff; }
+      .alert-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+      .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+      .status-new { background: var(--new-bg); color: var(--new-fg); }
+      .status-accepted { background: var(--accepted-bg); color: var(--accepted-fg); }
+      .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+      .det-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-bottom: 10px; }
+      .det-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fafafa; }
+      .det-card img { width: 100%; height: 82px; object-fit: cover; display: block; background: #d1d5db; }
+      .det-card img.expandable { cursor: zoom-in; }
+      .det-empty { width: 100%; height: 82px; background: #e5e7eb; display: flex; align-items: center; justify-content: center; color: #4b5563; font-size: 11px; }
+      .det-label { font-size: 12px; padding: 6px; color: #1f2937; }
+            .alert-video-wrap {
+                margin: 8px 0 10px;
+                border: 1px solid var(--border);
+                border-radius: 8px;
+                overflow: hidden;
+                background: #111827;
+            }
+            .alert-video {
+                width: 100%;
+                display: block;
+                background: #000;
+            }
+      .actions { display: flex; gap: 8px; }
+      .actions button {
+        border: 0;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: #fff;
+        background: var(--btn);
+        cursor: pointer;
+      }
+      .actions button:hover { background: var(--btn-hover); }
+      .actions button.reject { background: #991b1b; }
+      .actions button.reject:hover { background: #7f1d1d; }
+      .fold-section {
+        margin-bottom: 10px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: #f9fafb;
+        padding: 8px 10px;
+      }
+      .fold-section summary {
+        cursor: pointer;
+        color: #374151;
+        font-size: 13px;
+        font-weight: 600;
+      }
+      .fold-section[open] summary { margin-bottom: 10px; }
+      .zone-group {
+        display: grid;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+      .zone-group-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: #374151;
+        letter-spacing: 0.03em;
+        text-transform: uppercase;
+      }
+      .empty-note {
+        font-size: 12px;
+        color: #6b7280;
+        padding: 10px;
+        border: 1px dashed var(--border);
+        border-radius: 8px;
+        background: #fafafa;
+      }
+      .settings-grid {
+        display: grid;
+        gap: 10px;
+      }
+      .settings-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .settings-field {
+        display: grid;
+        gap: 4px;
+        font-size: 12px;
+        color: #374151;
+      }
+      .settings-field input,
+      .settings-field select {
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 7px 8px;
+        font-size: 13px;
+        color: #111827;
+        background: #fff;
+      }
+      .settings-toggle {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        font-size: 13px;
+        color: #1f2937;
+      }
+      .settings-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .settings-actions button {
+        border: 0;
+        border-radius: 8px;
+        padding: 7px 10px;
+        font-size: 12px;
+        color: #fff;
+        background: #1f2937;
+        cursor: pointer;
+      }
+      .settings-actions button.alt {
+        background: #4b5563;
+      }
+      .settings-status {
+        font-size: 12px;
+        color: #374151;
+      }
+      .error { margin-top: 8px; color: #b91c1c; font-size: 12px; min-height: 16px; }
+      .lightbox {
+        position: fixed;
+        inset: 0;
+        background: rgba(15, 23, 42, 0.82);
+        display: none;
+        align-items: center;
+        justify-content: center;
+        z-index: 999;
+        padding: 24px;
+      }
+      .lightbox.open { display: flex; }
+      .lightbox-inner { position: relative; max-width: min(1000px, 96vw); max-height: 92vh; }
+            .lightbox img {
+                position: relative;
+                z-index: 1;
+                max-width: 100%;
+                max-height: 92vh;
+                border-radius: 10px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+                background: #111827;
+                transform-origin: center center;
+                transition: transform 0.08s ease-out;
+            }
+      .lightbox-close {
+        position: absolute;
+                z-index: 3;
+        top: -12px;
+        right: -12px;
+        border: 0;
+        width: 34px;
+        height: 34px;
+        border-radius: 50%;
+        background: #111827;
+        color: #fff;
+        font-size: 20px;
+        line-height: 1;
+        cursor: pointer;
+      }
+            .lightbox-tools {
+                position: absolute;
+                z-index: 3;
+                top: -12px;
+                right: 30px;
+                display: flex;
+                gap: 6px;
+            }
+            .lightbox-tools button {
+                border: 0;
+                border-radius: 8px;
+                background: #111827;
+                color: #fff;
+                width: 34px;
+                height: 34px;
+                font-size: 16px;
+                cursor: pointer;
+            }
+            .map-modal {
+                position: fixed;
+                inset: 0;
+                background: rgba(15, 23, 42, 0.86);
+                display: none;
+                align-items: center;
+                justify-content: center;
+                z-index: 1001;
+                padding: 24px;
+            }
+            .map-modal.open { display: flex; }
+            .map-modal-card {
+                position: relative;
+                width: min(1100px, 96vw);
+                max-height: 92vh;
+                background: #0f172a;
+                border: 1px solid rgba(148, 163, 184, 0.35);
+                border-radius: 12px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+                overflow: hidden;
+            }
+            .map-modal-head {
+                display: flex;
+                align-items: center;
+                justify-content: space-between;
+                gap: 12px;
+                padding: 10px 12px;
+                color: #e2e8f0;
+                background: rgba(15, 23, 42, 0.95);
+                border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+                font-size: 13px;
+            }
+            .map-modal-close {
+                border: 0;
+                border-radius: 8px;
+                background: #1e293b;
+                color: #fff;
+                width: 32px;
+                height: 32px;
+                cursor: pointer;
+                font-size: 18px;
+                line-height: 1;
+            }
+            .map-modal-body {
+                padding: 10px;
+                background: #020617;
+            }
+            .map-modal-body img {
+                width: 100%;
+                max-height: calc(92vh - 100px);
+                object-fit: contain;
+                display: block;
+                border-radius: 8px;
+                background: #0b1220;
+            }
+            .map-modal-note {
+                margin-top: 8px;
+                color: #94a3b8;
+                font-size: 12px;
+            }
+      @media (max-width: 600px) {
+        .settings-row { grid-template-columns: 1fr; }
+        .alerts-scroll { height: 58vh; }
+      }
+      @media (max-width: 980px) { main { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <header>
+      <strong>Lab Food/Drink Monitor</strong>
+      <div class="header-actions">
+                <button id="openMapBtn" type="button" aria-expanded="false">Map</button>
+        <button id="openSettingsBtn" type="button" aria-expanded="false">Open Settings</button>
+      </div>
+    </header>
+    <main>
+      <section id="settingsCard" class="card settings-card hidden">
+        <h2>Runtime Settings</h2>
+        <form id="settingsForm" class="settings-grid">
+          <label class="settings-toggle">
+            <input type="checkbox" id="setCameraEnabled" />
+            Camera enabled
+          </label>
+          <label class="settings-toggle">
+            <input type="checkbox" id="setDetectionEnabled" />
+            Detection enabled
+          </label>
+          <div class="settings-row">
+            <label class="settings-field">Confidence
+              <input id="setConf" type="number" min="0.01" max="1" step="0.01" />
+            </label>
+            <label class="settings-field">IoU
+              <input id="setIou" type="number" min="0.01" max="1" step="0.01" />
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">Persist frames
+              <input id="setPersistFrames" type="number" min="1" step="1" />
+            </label>
+            <label class="settings-field">Clear frames
+              <input id="setClearFrames" type="number" min="1" step="1" />
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">Cooldown (s)
+              <input id="setCooldown" type="number" min="0" step="0.1" />
+            </label>
+            <label class="settings-field">Stream FPS
+              <input id="setStreamFps" type="number" min="1" step="1" />
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">Display width (0=auto)
+              <input id="setWidth" type="number" min="0" step="1" />
+            </label>
+            <label class="settings-field">Display height (0=auto)
+              <input id="setHeight" type="number" min="0" step="1" />
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">Inference image size
+              <input id="setInferenceImgsz" type="number" min="160" max="1280" step="32" />
+            </label>
+            <label class="settings-field">Max inference FPS (0=unlimited)
+              <input id="setMaxInferenceFps" type="number" min="0" max="60" step="0.5" />
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">JPEG quality
+              <input id="setJpegQuality" type="number" min="40" max="95" step="1" />
+            </label>
+            <label class="settings-toggle">
+              <input id="setMotionEnabled" type="checkbox" />
+              Motion detection
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">Motion hold seconds
+              <input id="setMotionHoldSeconds" type="number" min="0" max="5" step="0.1" />
+            </label>
+            <div></div>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">Webcam device
+              <select id="setCameraIndex"></select>
+            </label>
+            <div></div>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">Camera zone
+              <select id="setCameraZone">
+                <option value="Zone A">Zone A</option>
+                <option value="Zone B">Zone B</option>
+                <option value="Zone C">Zone C</option>
+                <option value="Zone D">Zone D</option>
+                <option value="Zone E">Zone E</option>
+                <option value="Zone F">Zone F</option>
+                <option value="Zone G">Zone G</option>
+                <option value="Zone H">Zone H</option>
+                <option value="Zone I">Zone I</option>
+              </select>
+            </label>
+          </div>
+          <div class="settings-actions">
+            <button type="submit">Apply settings</button>
+            <button id="resetSettings" type="button" class="alt">Reset defaults</button>
+            <button id="reloadSettings" type="button" class="alt">Reload</button>
+            <button id="trainAccepted" type="button">Train on accepted</button>
+            <span id="settingsStatus" class="settings-status"></span>
+            <span id="trainStatus" class="settings-status"></span>
+          </div>
+        </form>
+      </section>
+      <section class="card">
+        <h2>Live Camera Feed</h2>
+        <img class="feed" src="/stream" alt="Live camera feed" />
+      </section>
+      <section class="card alerts-card">
+        <h2>Recent Alerts</h2>
+        <div class="alerts-toolbar">
+          <label>
+            <input id="groupAlertsByZone" type="checkbox" />
+            Group by zone
+          </label>
+        </div>
+                <section class="backend-stats" aria-label="Backend eating and drinking counts">
+                    <div class="stats-total">Total people detected eating/drinking: <strong id="consumptionTotalCount">0</strong></div>
+                    <div class="stats-table-wrap">
+                        <table class="stats-table">
+                            <thead>
+                                <tr>
+                                    <th>Zone</th>
+                                    <th>Category</th>
+                                    <th>Count</th>
+                                </tr>
+                            </thead>
+                            <tbody id="consumptionStatsBody">
+                                <tr>
+                                    <td colspan="3">Loading...</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <div id="consumptionUpdatedAt" class="stats-updated"></div>
+                </section>
+        <div class="alerts-scroll">
+          <div id="alertsPanel">
+            <details id="acceptedSection" class="fold-section" style="display:none;">
+              <summary>Accepted (<span id="acceptedCount">0</span>)</summary>
+              <div id="acceptedAlerts" class="alerts-list"></div>
+            </details>
+            <details id="newSection" class="fold-section" open>
+              <summary>New / Active (<span id="newCount">0</span>)</summary>
+              <div id="activeAlerts" class="alerts-list"></div>
+            </details>
+          </div>
+        </div>
+        <div id="error" class="error"></div>
+      </section>
+    </main>
+    <div id="lightbox" class="lightbox" aria-hidden="true">
+      <div class="lightbox-inner">
+                <div class="lightbox-tools">
+                    <button id="zoomOutBtn" type="button" aria-label="Zoom out">-</button>
+                    <button id="zoomResetBtn" type="button" aria-label="Reset zoom">1:1</button>
+                    <button id="zoomInBtn" type="button" aria-label="Zoom in">+</button>
+                </div>
+        <button id="lightboxClose" class="lightbox-close" aria-label="Close expanded image">×</button>
+        <img id="lightboxImg" alt="Expanded detection" />
+      </div>
+    </div>
+        <div id="mapModal" class="map-modal" aria-hidden="true">
+            <div class="map-modal-card">
+                <div class="map-modal-head">
+                    <strong>DFX Lab Layout</strong>
+                    <button id="mapModalClose" class="map-modal-close" type="button" aria-label="Close map">×</button>
+                </div>
+                <div class="map-modal-body">
+                    <img id="mapImage" alt="DFX lab layout map" />
+                    <div id="mapModalNote" class="map-modal-note"></div>
+                </div>
+            </div>
+        </div>
+    <script>
+      // Escape user-controlled strings before placing them into HTML templates.
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll('&', '&amp;')
+          .replaceAll('<', '&lt;')
+          .replaceAll('>', '&gt;')
+          .replaceAll('"', '&quot;')
+          .replaceAll("'", '&#39;');
+      }
+
+            // The map modal displays the static DFX lab layout image served by the backend.
+            function setupMapModal() {
+                const openBtn = document.getElementById('openMapBtn');
+                const modal = document.getElementById('mapModal');
+                const closeBtn = document.getElementById('mapModalClose');
+                const img = document.getElementById('mapImage');
+                const note = document.getElementById('mapModalNote');
+
+                function closeModal() {
+                    modal.classList.remove('open');
+                    modal.setAttribute('aria-hidden', 'true');
+                    openBtn.setAttribute('aria-expanded', 'false');
+                }
+
+                function openModal() {
+                    note.textContent = 'Loading map...';
+                    img.src = `/map-image?ts=${Date.now()}`;
+                    modal.classList.add('open');
+                    modal.setAttribute('aria-hidden', 'false');
+                    openBtn.setAttribute('aria-expanded', 'true');
+                }
+
+                img.addEventListener('load', () => {
+                    note.textContent = '';
+                });
+                img.addEventListener('error', () => {
+                    note.textContent = 'Map image not found. Place your file at assets/dfx_lab_map.png and refresh.';
+                });
+                openBtn.addEventListener('click', openModal);
+                closeBtn.addEventListener('click', closeModal);
+                modal.addEventListener('click', (event) => {
+                    if (event.target === modal) {
+                        closeModal();
+                    }
+                });
+                document.addEventListener('keydown', (event) => {
+                    if (event.key === 'Escape' && modal.classList.contains('open')) {
+                        closeModal();
+                    }
+                });
+            }
+
+      // Each detection renders as a small card so alerts can show multiple crops at once.
+      function renderDetection(det) {
+        const confidence = Number(det.confidence || 0).toFixed(2);
+        const className = escapeHtml(det.class_name || 'item');
+        const snippet = det.snippet_file
+          ? `<img class="expandable" loading="lazy" src="/snippets/${encodeURIComponent(det.snippet_file)}" alt="${className} snippet" />`
+          : `<div class="det-empty">No crop</div>`;
+        return `<div class="det-card">${snippet}<div class="det-label">${className} (${confidence})</div></div>`;
+      }
+
+      // The lightbox keeps the alert list compact while still allowing full-size inspection.
+      function setupLightbox() {
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightboxImg');
+        const closeBtn = document.getElementById('lightboxClose');
+                const zoomInBtn = document.getElementById('zoomInBtn');
+                const zoomOutBtn = document.getElementById('zoomOutBtn');
+                const zoomResetBtn = document.getElementById('zoomResetBtn');
+        const alertsPanel = document.getElementById('alertsPanel');
+                const minZoom = 0.5;
+                const maxZoom = 5.0;
+                let zoom = 1.0;
+
+                function applyZoom() {
+                    lightboxImg.style.transform = `scale(${zoom.toFixed(2)})`;
+                }
+
+                function setZoom(nextZoom) {
+                    zoom = Math.min(maxZoom, Math.max(minZoom, Number(nextZoom) || 1.0));
+                    applyZoom();
+                }
+
+                function resetZoom() {
+                    setZoom(1.0);
+                }
+
+        function closeLightbox() {
+          lightbox.classList.remove('open');
+          lightbox.setAttribute('aria-hidden', 'true');
+          lightboxImg.removeAttribute('src');
+                    resetZoom();
+        }
+
+        function openLightbox(src, altText) {
+          lightboxImg.src = src;
+          lightboxImg.alt = altText || 'Expanded detection';
+                    resetZoom();
+          lightbox.classList.add('open');
+          lightbox.setAttribute('aria-hidden', 'false');
+        }
+
+        alertsPanel.addEventListener('click', (event) => {
+          const img = event.target.closest('img.expandable');
+          if (!img) {
+            return;
+          }
+          openLightbox(img.src, img.alt);
+        });
+        closeBtn.addEventListener('click', closeLightbox);
+                zoomInBtn.addEventListener('click', () => setZoom(zoom + 0.25));
+                zoomOutBtn.addEventListener('click', () => setZoom(zoom - 0.25));
+                zoomResetBtn.addEventListener('click', resetZoom);
+                lightboxImg.addEventListener('wheel', (event) => {
+                    if (!lightbox.classList.contains('open')) {
+                        return;
+                    }
+                    event.preventDefault();
+                    setZoom(zoom + (event.deltaY < 0 ? 0.15 : -0.15));
+                }, { passive: false });
+        lightbox.addEventListener('click', (event) => {
+          if (event.target === lightbox) {
+            closeLightbox();
+          }
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && lightbox.classList.contains('open')) {
+            closeLightbox();
+          }
+        });
+      }
+
+      async function manageAlert(alertId, action) {
+        const res = await fetch('/alerts/manage', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ alert_id: alertId, action }),
+        });
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+      }
+
+      function setSettingsStatus(message, isError = false) {
+        const statusEl = document.getElementById('settingsStatus');
+        statusEl.textContent = message || '';
+        statusEl.style.color = isError ? '#b91c1c' : '#374151';
+      }
+
+      function setTrainStatus(message, isError = false) {
+        const statusEl = document.getElementById('trainStatus');
+        statusEl.textContent = message || '';
+        statusEl.style.color = isError ? '#b91c1c' : '#374151';
+      }
+
+      async function refreshTrainStatus() {
+        try {
+          const res = await fetch('/train/status');
+          if (!res.ok) {
+            return;
+          }
+          const data = await res.json();
+          if (data.running) {
+            setTrainStatus('Training running...');
+            return;
+          }
+          if (data.last_error) {
+            setTrainStatus(`Train failed: ${data.last_error}`, true);
+            return;
+          }
+          if (data.last_completed_at) {
+            setTrainStatus(`Last train: ${data.last_completed_at}`);
+            return;
+          }
+          setTrainStatus('');
+        } catch (err) {
+          setTrainStatus('Could not read train status', true);
+        }
+      }
+
+      async function triggerTraining() {
+        try {
+          const res = await fetch('/train/accepted', {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          setTrainStatus('Training started...');
+          refreshTrainStatus();
+        } catch (err) {
+          setTrainStatus(err.message || 'Could not start training', true);
+        }
+      }
+
+      // The settings panel is hidden by default because operators mostly watch the live feed.
+      function setupSettingsPanel() {
+        const opener = document.getElementById('openSettingsBtn');
+        const card = document.getElementById('settingsCard');
+        function sync() {
+          const isOpen = !card.classList.contains('hidden');
+          opener.textContent = isOpen ? 'Hide Settings' : 'Open Settings';
+          opener.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+        }
+        opener.addEventListener('click', () => {
+          card.classList.toggle('hidden');
+          sync();
+        });
+        sync();
+      }
+
+      // Mirror server-side runtime settings into the form so edits always start from real state.
+      function applySettingsToForm(settings) {
+        document.getElementById('setCameraEnabled').checked = Boolean(settings.camera_enabled);
+        document.getElementById('setDetectionEnabled').checked = Boolean(settings.detection_enabled);
+        document.getElementById('setConf').value = Number(settings.conf || 0.55).toFixed(2);
+        document.getElementById('setIou').value = Number(settings.iou || 0.40).toFixed(2);
+        document.getElementById('setPersistFrames').value = Number(settings.persist_frames || 5);
+        document.getElementById('setClearFrames').value = Number(settings.clear_frames || 15);
+        document.getElementById('setCooldown').value = Number(settings.cooldown || 15).toFixed(1);
+        document.getElementById('setStreamFps').value = Number(settings.stream_fps || 10).toFixed(0);
+        document.getElementById('setWidth').value = Number(settings.width || 0).toFixed(0);
+        document.getElementById('setHeight').value = Number(settings.height || 0).toFixed(0);
+        document.getElementById('setInferenceImgsz').value = Number(settings.inference_imgsz || 640).toFixed(0);
+        document.getElementById('setMaxInferenceFps').value = Number(settings.max_inference_fps || 0).toFixed(1);
+        document.getElementById('setJpegQuality').value = Number(settings.jpeg_quality || 75).toFixed(0);
+        document.getElementById('setMotionEnabled').checked = Boolean(settings.motion_enabled);
+        document.getElementById('setMotionHoldSeconds').value = Number(settings.motion_hold_seconds || 0.1).toFixed(1);
+        document.getElementById('setCameraIndex').value = String(Number(settings.camera_index || 0));
+        document.getElementById('setCameraZone').value = settings.camera_zone || 'Zone A';
+      }
+
+      function readNumberField(id, label) {
+        const value = Number(document.getElementById(id).value);
+        if (!Number.isFinite(value)) {
+          throw new Error(`Invalid ${label}`);
+        }
+        return value;
+      }
+
+      // Build the API payload from the current form values, with client-side validation first.
+      function collectSettingsPayload() {
+        return {
+          camera_enabled: document.getElementById('setCameraEnabled').checked,
+          detection_enabled: document.getElementById('setDetectionEnabled').checked,
+          conf: readNumberField('setConf', 'confidence'),
+          iou: readNumberField('setIou', 'IoU'),
+          persist_frames: Math.round(readNumberField('setPersistFrames', 'persist frames')),
+          clear_frames: Math.round(readNumberField('setClearFrames', 'clear frames')),
+          cooldown: readNumberField('setCooldown', 'cooldown'),
+          stream_fps: readNumberField('setStreamFps', 'stream FPS'),
+          width: Math.round(readNumberField('setWidth', 'display width')),
+          height: Math.round(readNumberField('setHeight', 'display height')),
+          inference_imgsz: Math.round(readNumberField('setInferenceImgsz', 'inference image size')),
+          max_inference_fps: readNumberField('setMaxInferenceFps', 'max inference FPS'),
+          jpeg_quality: Math.round(readNumberField('setJpegQuality', 'JPEG quality')),
+          motion_enabled: document.getElementById('setMotionEnabled').checked,
+          motion_hold_seconds: readNumberField('setMotionHoldSeconds', 'motion hold seconds'),
+          camera_index: Math.round(readNumberField('setCameraIndex', 'webcam device')),
+          camera_zone: document.getElementById('setCameraZone').value,
+        };
+      }
+
+      async function loadCameraDevices(selectedIndex = 0) {
+        const select = document.getElementById('setCameraIndex');
+        try {
+          const res = await fetch('/cameras');
+          if (!res.ok) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          const devices = await res.json();
+          const targetValue = String(Number(selectedIndex || 0));
+          select.innerHTML = '';
+          devices.forEach((device) => {
+            const option = document.createElement('option');
+            option.value = String(Number(device.index || 0));
+            option.textContent = device.label || `Camera ${option.value}`;
+            select.appendChild(option);
+          });
+          const hasSelected = Array.from(select.options).some((option) => option.value === targetValue);
+          if (!hasSelected) {
+            const fallback = document.createElement('option');
+            fallback.value = targetValue;
+            fallback.textContent = `Camera ${targetValue}`;
+            select.appendChild(fallback);
+          }
+          select.value = targetValue;
+        } catch (err) {
+          select.innerHTML = '';
+          const fallback = document.createElement('option');
+          fallback.value = String(Number(selectedIndex || 0));
+          fallback.textContent = `Camera ${fallback.value}`;
+          select.appendChild(fallback);
+        }
+      }
+
+      async function loadSettings(showStatus = false) {
+        const res = await fetch('/settings');
+        if (!res.ok) {
+          const text = await res.text();
+          throw new Error(text || `HTTP ${res.status}`);
+        }
+        const settings = await res.json();
+        await loadCameraDevices(settings.camera_index || 0);
+        applySettingsToForm(settings);
+        if (showStatus) {
+          setSettingsStatus(`Loaded (${settings.updated_at || 'now'})`);
+        }
+      }
+
+      async function saveSettings(event) {
+        event.preventDefault();
+        try {
+          const payload = collectSettingsPayload();
+          const res = await fetch('/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          if (data.settings) {
+            applySettingsToForm(data.settings);
+          }
+          setSettingsStatus('Settings applied');
+        } catch (err) {
+          setSettingsStatus(err.message || 'Could not save settings', true);
+        }
+      }
+
+      async function resetSettingsToDefaults() {
+        try {
+          const res = await fetch('/settings/reset', {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            const text = await res.text();
+            throw new Error(text || `HTTP ${res.status}`);
+          }
+          const data = await res.json();
+          if (data.settings) {
+            applySettingsToForm(data.settings);
+          }
+          setSettingsStatus('Settings reset to defaults');
+        } catch (err) {
+          setSettingsStatus(err.message || 'Could not reset settings', true);
+        }
+      }
+
+      // Wire the settings form once, then let periodic polling keep the training status fresh.
+      function setupSettingsForm() {
+        const form = document.getElementById('settingsForm');
+        const reloadBtn = document.getElementById('reloadSettings');
+        const resetBtn = document.getElementById('resetSettings');
+        const trainBtn = document.getElementById('trainAccepted');
+        form.addEventListener('submit', saveSettings);
+        reloadBtn.addEventListener('click', async () => {
+          try {
+            await loadSettings(true);
+          } catch (err) {
+            setSettingsStatus('Could not reload settings', true);
+          }
+        });
+        resetBtn.addEventListener('click', resetSettingsToDefaults);
+        trainBtn.addEventListener('click', triggerTraining);
+        loadSettings().catch(() => {
+          setSettingsStatus('Could not load settings', true);
+        });
+        refreshTrainStatus();
+      }
+
+      // A cheap fingerprint prevents unnecessary DOM rebuilds when the alert list is unchanged.
+      function fingerprintAlerts(alerts) {
+        return alerts.map((alert) => {
+          const detections = Array.isArray(alert.detections) ? alert.detections : [];
+          const detectionKey = detections
+            .map((det) => `${det.class_name || ''}:${det.confidence || ''}:${det.snippet_file || ''}:${det.zone || ''}`)
+            .join('|');
+                    return `${alert.id || ''}:${alert.status || ''}:${alert.timestamp || ''}:${alert.zone || ''}:${alert.video_file || ''}:${detectionKey}`;
+        }).join('||');
+      }
+
+      let lastAlertsFingerprint = '';
+      let refreshInFlight = false;
+      let cachedOrderedAlerts = [];
+
+      // Alert cards are rebuilt from API data on every meaningful refresh.
+      function renderAlertCard(alert, errorEl) {
+        const detections = Array.isArray(alert.detections) ? alert.detections : [];
+        const zone = alert.zone || (detections[0] && detections[0].zone) || '';
+        const status = alert.status || 'new';
+        const isAccepted = status === 'accepted';
+        const badgeClass = isAccepted ? 'status-accepted' : 'status-new';
+        const actionBtn = isAccepted
+          ? `<button class="reject" data-action="delete">Delete</button>`
+          : `<button data-action="accept">Accept</button>`;
+        const controls = alert.id
+          ? `<div class="actions">${actionBtn}${isAccepted ? '' : '<button class="reject" data-action="reject">Reject</button>'}</div>`
+          : '';
+                const motionTag = alert.consumption_motion_detected
+                    ? ` | hand-to-mouth (${Number(alert.consumption_motion_score || 0).toFixed(2)})`
+                    : '';
+                const motionSource = alert.hand_to_mouth_source
+                    ? ` | source: ${String(alert.hand_to_mouth_source).replaceAll('_', ' ')}`
+                    : '';
+                const motionEvents = alert.hand_to_mouth_event_count
+                    ? ` | events/30s: ${Number(alert.hand_to_mouth_event_count || 0)}`
+                    : '';
+        const zoneTag = zone ? ` | ${zone}` : '';
+                                const video = alert.video_file
+                                        ? `<div class="alert-video-wrap">` +
+                                            `<video class="alert-video" controls preload="metadata" playsinline>` +
+                                            `<source src="/videos/${encodeURIComponent(alert.video_file)}" />` +
+                                            `Your browser cannot play this recording.` +
+                                            `</video>` +
+                                            `<div class="det-label"><a href="/videos/${encodeURIComponent(alert.video_file)}" target="_blank" rel="noopener">Open/download recording</a></div>` +
+                                            `</div>`
+                                        : '';
+        const item = document.createElement('article');
+        item.className = 'alert';
+        item.innerHTML =
+          `<div class="alert-head"><span class="badge ${badgeClass}">${escapeHtml(status)}</span>` +
+          `<span>${escapeHtml(alert.timestamp || 'unknown time')}</span></div>` +
+                    `<div class="meta">${detections.length} detection(s)${escapeHtml(zoneTag + motionTag + motionSource + motionEvents)}</div>` +
+                    video +
+          `<div class="det-grid">${detections.map(renderDetection).join('')}</div>` +
+          controls;
+        item.querySelectorAll('button[data-action]').forEach(btn => {
+          btn.addEventListener('click', async () => {
+            try {
+              btn.disabled = true;
+              await manageAlert(alert.id, btn.dataset.action);
+              await refreshAlerts();
+            } catch (err) {
+              errorEl.textContent = 'Could not update alert. Try again.';
+            } finally {
+              btn.disabled = false;
+            }
+          });
+        });
+        return item;
+      }
+
+      function groupAlertsByZone(alerts) {
+        const groups = new Map();
+        alerts.forEach((alert) => {
+          const detections = Array.isArray(alert.detections) ? alert.detections : [];
+          const zone = alert.zone || (detections[0] && detections[0].zone) || 'Unassigned';
+          if (!groups.has(zone)) {
+            groups.set(zone, []);
+          }
+          groups.get(zone).push(alert);
+        });
+        return groups;
+      }
+
+      function renderAlertsInto(container, alerts, errorEl, emptyMessage) {
+        container.innerHTML = '';
+        if (alerts.length === 0) {
+          container.innerHTML = `<div class="empty-note">${escapeHtml(emptyMessage)}</div>`;
+          return;
+        }
+        const groupByZone = document.getElementById('groupAlertsByZone').checked;
+        if (!groupByZone) {
+          alerts.forEach((alert) => {
+            container.appendChild(renderAlertCard(alert, errorEl));
+          });
+          return;
+        }
+        groupAlertsByZone(alerts).forEach((groupAlerts, zone) => {
+          const group = document.createElement('section');
+          group.className = 'zone-group';
+          const title = document.createElement('div');
+          title.className = 'zone-group-title';
+          title.textContent = `${zone} (${groupAlerts.length})`;
+          const list = document.createElement('div');
+          list.className = 'alerts-list';
+          groupAlerts.forEach((alert) => {
+            list.appendChild(renderAlertCard(alert, errorEl));
+          });
+          group.appendChild(title);
+          group.appendChild(list);
+          container.appendChild(group);
+        });
+      }
+
+      function renderAlerts(orderedAlerts, errorEl) {
+        const activeList = document.getElementById('activeAlerts');
+        const acceptedList = document.getElementById('acceptedAlerts');
+        const acceptedCount = document.getElementById('acceptedCount');
+        const newCount = document.getElementById('newCount');
+        const acceptedSection = document.getElementById('acceptedSection');
+        const activeAlerts = orderedAlerts.filter((alert) => (alert.status || 'new') !== 'accepted');
+        const acceptedAlerts = orderedAlerts.filter((alert) => (alert.status || 'new') === 'accepted');
+
+        renderAlertsInto(activeList, activeAlerts, errorEl, 'No active alerts right now.');
+        renderAlertsInto(acceptedList, acceptedAlerts, errorEl, 'No accepted alerts right now.');
+        newCount.textContent = String(activeAlerts.length);
+        acceptedCount.textContent = String(acceptedAlerts.length);
+        if (acceptedAlerts.length === 0) {
+          acceptedSection.open = false;
+          acceptedSection.style.display = 'none';
+        } else {
+          acceptedSection.style.display = '';
+        }
+      }
+
+      async function refreshAlerts() {
+        if (refreshInFlight) {
+          return;
+        }
+        refreshInFlight = true;
+        const errorEl = document.getElementById('error');
+        errorEl.textContent = '';
+        try {
+          const res = await fetch('/alerts?limit=20');
+          const data = await res.json();
+          const ordered = data.slice().reverse();
+          cachedOrderedAlerts = ordered;
+          const nextFingerprint = fingerprintAlerts(ordered);
+          if (nextFingerprint === lastAlertsFingerprint) {
+            return;
+          }
+          lastAlertsFingerprint = nextFingerprint;
+          renderAlerts(ordered, errorEl);
+        } catch (err) {
+          errorEl.textContent = 'Could not load alerts right now.';
+        } finally {
+          refreshInFlight = false;
+        }
+      }
+
+            function renderConsumptionStats(data) {
+                const totalEl = document.getElementById('consumptionTotalCount');
+                const bodyEl = document.getElementById('consumptionStatsBody');
+                const updatedEl = document.getElementById('consumptionUpdatedAt');
+                totalEl.textContent = String(Number(data.total_people_detected || 0));
+                const rows = Array.isArray(data.breakdown) ? data.breakdown : [];
+                if (rows.length === 0) {
+                    bodyEl.innerHTML = '<tr><td colspan="3">No eating/drinking detections yet.</td></tr>';
+                } else {
+                    bodyEl.innerHTML = rows
+                        .map((row) => {
+                            const zone = escapeHtml(row.zone || 'Unassigned');
+                            const category = escapeHtml(row.category || 'unknown');
+                            const count = Number(row.count || 0);
+                            return `<tr><td>${zone}</td><td>${category}</td><td>${count}</td></tr>`;
+                        })
+                        .join('');
+                }
+                const active = Number(data.active_alerts || 0);
+                const accepted = Number(data.accepted_alerts || 0);
+                const generatedAt = data.generated_at ? String(data.generated_at) : 'just now';
+                updatedEl.textContent = `Updated: ${generatedAt} | active: ${active} | accepted: ${accepted}`;
+            }
+
+            async function refreshConsumptionStats() {
+                try {
+                    const res = await fetch('/stats/consumption');
+                    if (!res.ok) {
+                        throw new Error(`HTTP ${res.status}`);
+                    }
+                    const data = await res.json();
+                    renderConsumptionStats(data || {});
+                } catch (err) {
+                    const updatedEl = document.getElementById('consumptionUpdatedAt');
+                    updatedEl.textContent = 'Could not load backend counts right now.';
+                }
+            }
+
+      document.getElementById('groupAlertsByZone').addEventListener('change', () => {
+        renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
+      });
+            setupMapModal();
+      setupLightbox();
+      setupSettingsPanel();
+      setupSettingsForm();
+      refreshAlerts();
+    refreshConsumptionStats();
+      refreshTrainStatus();
+      setInterval(refreshAlerts, 2000);
+    setInterval(refreshConsumptionStats, 5000);
+      setInterval(refreshTrainStatus, 5000);
+    </script>
+  </body>
+</html>

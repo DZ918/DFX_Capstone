@@ -3349,5 +3349,316 @@
     "accepted_samples": 1,
     "accepted_at": "2026-04-15T13:35:37",
     "updated_at": "2026-04-15T13:35:37"
+  },
+  {
+    "id": "e4dd2fb17234",
+    "status": "accepted",
+    "timestamp": "2026-04-15T22:27:47",
+    "alert_reason": "new_object",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 0,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.6877,
+        "bbox_xyxy": [
+          0.37,
+          407.27,
+          75.57,
+          479.8
+        ],
+        "center_xy": [
+          37.97,
+          443.53
+        ],
+        "zone": "Zone A",
+        "snippet_file": "e4dd2fb17234_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.059375,
+          0.90445,
+          0.11875,
+          0.191099
+        ],
+        "training_exported": true,
+        "training_sample": "e4dd2fb17234_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-04-15T22:30:11",
+    "updated_at": "2026-04-15T22:30:11"
+  },
+  {
+    "id": "f6add1435718",
+    "status": "accepted",
+    "timestamp": "2026-04-15T22:27:48",
+    "alert_reason": "new_object",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 0,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.697,
+        "bbox_xyxy": [
+          216.5,
+          235.24,
+          288.51,
+          427.17
+        ],
+        "center_xy": [
+          252.5,
+          331.21
+        ],
+        "zone": "Zone A",
+        "snippet_file": "f6add1435718_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.237205,
+          0.689583,
+          0.143701,
+          0.4
+        ],
+        "training_exported": true,
+        "training_sample": "f6add1435718_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-04-15T22:30:13",
+    "updated_at": "2026-04-15T22:30:13"
+  },
+  {
+    "id": "bc2f41bc0537",
+    "status": "accepted",
+    "timestamp": "2026-04-15T22:28:51",
+    "alert_reason": "new_object",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 0,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.7087,
+        "bbox_xyxy": [
+          336.52,
+          231.05,
+          412.15,
+          399.14
+        ],
+        "center_xy": [
+          374.34,
+          315.1
+        ],
+        "zone": "Zone A",
+        "snippet_file": "bc2f41bc0537_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.268595,
+          0.65625,
+          0.206612,
+          0.35
+        ],
+        "training_exported": true,
+        "training_sample": "bc2f41bc0537_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-04-15T22:30:11",
+    "updated_at": "2026-04-15T22:30:11"
+  },
+  {
+    "id": "bc57f4d01981",
+    "status": "accepted",
+    "timestamp": "2026-04-15T22:30:01",
+    "alert_reason": "motion_burst",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": true,
+    "consumption_motion_score": 1.5,
+    "hand_to_mouth_source": "person_proxy",
+    "hand_to_mouth_event_count": 3,
+    "video_file": "bc57f4d01981.webm",
+    "video_mime": "video/webm",
+    "detections": [],
+    "accepted_at": "2026-04-15T22:30:09",
+    "updated_at": "2026-04-15T22:30:09"
+  },
+  {
+    "id": "f8566d5cb4bf",
+    "status": "accepted",
+    "timestamp": "2026-04-15T22:30:02",
+    "alert_reason": "new_object",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 0,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.8132,
+        "bbox_xyxy": [
+          72.86,
+          316.2,
+          169.96,
+          478.59
+        ],
+        "center_xy": [
+          121.41,
+          397.39
+        ],
+        "motion_track_id": 4,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "f8566d5cb4bf_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.189844,
+          0.828125,
+          0.151562,
+          0.339583
+        ],
+        "training_exported": true,
+        "training_sample": "f8566d5cb4bf_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-04-15T22:30:13",
+    "updated_at": "2026-04-15T22:30:13"
+  },
+  {
+    "id": "1aec2dbf1810",
+    "status": "accepted",
+    "timestamp": "2026-04-15T22:59:35",
+    "alert_reason": "new_object",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 1,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.6912,
+        "bbox_xyxy": [
+          383.79,
+          211.64,
+          432.45,
+          353.52
+        ],
+        "center_xy": [
+          408.12,
+          282.58
+        ],
+        "motion_track_id": 1,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "1aec2dbf1810_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.2443,
+          0.589583,
+          0.156352,
+          0.295833
+        ],
+        "training_exported": true,
+        "training_sample": "1aec2dbf1810_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-04-15T22:59:39",
+    "updated_at": "2026-04-15T22:59:39"
+  },
+  {
+    "id": "53dfb6d84840",
+    "status": "accepted",
+    "timestamp": "2026-04-15T23:10:32",
+    "alert_reason": "new_object",
+    "zone": "Zone A",
+    "frame_size": {
+      "width": 640,
+      "height": 480
+    },
+    "consumption_motion_detected": false,
+    "consumption_motion_score": 0.0,
+    "hand_to_mouth_source": "none",
+    "hand_to_mouth_event_count": 1,
+    "video_file": null,
+    "video_mime": "",
+    "detections": [
+      {
+        "class_id": 39,
+        "class_name": "bottle",
+        "confidence": 0.7269,
+        "bbox_xyxy": [
+          370.09,
+          182.11,
+          424.43,
+          318.93
+        ],
+        "center_xy": [
+          397.26,
+          250.52
+        ],
+        "motion_track_id": 1,
+        "motion_score": 0.0,
+        "consumption_motion": false,
+        "zone": "Zone A",
+        "snippet_file": "53dfb6d84840_0_bottle.jpg",
+        "snippet_bbox_xywhn": [
+          0.247678,
+          0.357143,
+          0.167183,
+          0.383754
+        ],
+        "training_exported": true,
+        "training_sample": "53dfb6d84840_0_bottle.jpg"
+      }
+    ],
+    "accepted_samples": 1,
+    "accepted_at": "2026-04-15T23:10:44",
+    "updated_at": "2026-04-15T23:10:44"
   }
 ]
