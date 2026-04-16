@@ -1,4 +1,4 @@
-path: C:\Users\ADMIN\Desktop\2026 4S\CIS4910\DFX_Capstone\training_data\dataset
+path: /home/user/DFX_Capstone/training_data/dataset
 train: images
 val: images
 names:
