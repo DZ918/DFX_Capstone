@@ -24,7 +24,7 @@ fi
 case "$MODE" in
 	dashboard)
 		exec env PYTHON="$PYTHON_BIN" "${SCRIPT_DIR}/run_dashboard.sh" --cam 0 --model yolov8n.pt "$@" \
-			2> >(grep -v 'NvMapMem' >&2)
+			2> >(grep -vE 'NvMapMem|cap_v4l\.cpp|VIDIOC_G_INPUT|obsensor_uvc_stream_channel|video4linux2' >&2)
 		;;
 	image)
 		if [[ $# -lt 1 ]]; then
@@ -32,7 +32,7 @@ case "$MODE" in
 			exit 1
 		fi
 		exec env PYTHON="$PYTHON_BIN" "${SCRIPT_DIR}/run_main.sh" --model yolov8n.pt --image "$1" "${@:2}" \
-			2> >(grep -v 'NvMapMem' >&2)
+			2> >(grep -vE 'NvMapMem|cap_v4l\.cpp|VIDIOC_G_INPUT|obsensor_uvc_stream_channel|video4linux2' >&2)
 		;;
 	help|-h|--help)
 		cat <<'EOF'

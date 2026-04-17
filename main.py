@@ -20,6 +20,12 @@ except Exception as exc:
     print(f"Warning: cv2 import failed: {exc}")
     cv2 = None
 
+if cv2 is not None:
+    try:
+        cv2.setLogLevel(0)
+    except Exception:
+        pass
+
 try:
     from ultralytics import YOLO, YOLOWorld
 except Exception as exc:

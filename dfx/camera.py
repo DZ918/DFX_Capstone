@@ -15,6 +15,12 @@ try:
 except Exception:
     cv2 = None
 
+if cv2 is not None:
+    try:
+        cv2.setLogLevel(0)
+    except Exception:
+        pass
+
 from dfx.constants import (
     ALERT_DETECTION_CONFIDENCE_FLOOR,
     FOOD_CLASS_NAMES,
