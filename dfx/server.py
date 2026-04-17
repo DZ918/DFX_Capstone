@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, unquote, urlparse
+from uuid import uuid4
 
 try:
     import cv2
@@ -21,7 +23,9 @@ except Exception:
     YOLO = None
 
 from dfx.alerts import (
+    append_alert,
     build_consumption_stats,
+    clamp_box,
     ensure_alert_metadata,
     read_alerts,
     write_alerts,
@@ -32,9 +36,11 @@ from dfx.settings import settings_snapshot, update_runtime_settings, reset_runti
 from dfx.training import (
     export_accepted_alert_samples,
     export_rejected_alert_samples,
+    read_class_map,
     start_training_job,
     training_status_snapshot,
 )
+from dfx.constants import FOOD_CLASS_NAMES
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
 
@@ -81,6 +87,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/map-image":
             self._send_map_image()
             return
+        if parsed.path == "/snapshot":
+            self._send_snapshot()
+            return
+        if parsed.path == "/classes":
+            self._send_classes()
+            return
         if parsed.path.startswith("/snippets/"):
             self._send_snippet(parsed.path.removeprefix("/snippets/"))
             return
@@ -105,6 +117,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/train/accepted":
             self._trigger_train_accepted()
+            return
+        if parsed.path == "/annotate":
+            self._create_manual_annotation()
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -468,6 +483,148 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 time.sleep(delay)
         except (BrokenPipeError, ConnectionResetError):
             return
+
+    def _send_snapshot(self):
+        """Return the current camera frame as a single JPEG image."""
+        config = self.server.config
+        payload = config.latest_jpeg
+        if payload is None:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No frame available")
+            return
+        body = bytes(payload)
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "image/jpeg")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _send_classes(self):
+        """Return the merged list of known food/drink class names."""
+        config = self.server.config
+        names = set(FOOD_CLASS_NAMES)
+        try:
+            trained = read_class_map(config.class_map_path)
+            names.update(trained.keys())
+        except Exception:
+            pass
+        self._send_json(sorted(names), HTTPStatus.OK)
+
+    def _create_manual_annotation(self):
+        """Save a user-drawn bounding box as a new alert for accept/reject training."""
+        config = self.server.config
+        if cv2 is None:
+            self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "OpenCV not available")
+            return
+        try:
+            payload = self._read_json_body()
+        except ValueError as exc:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        bbox = payload.get("bbox")
+        class_name = str(payload.get("class_name", "")).strip().lower()
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            self.send_error(HTTPStatus.BAD_REQUEST, "bbox must be [x1, y1, x2, y2] ratios")
+            return
+        if not class_name or len(class_name) > 64 or re.search(r'[/\\]', class_name):
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid class_name")
+            return
+        try:
+            ratios = [float(v) for v in bbox]
+        except (TypeError, ValueError):
+            self.send_error(HTTPStatus.BAD_REQUEST, "bbox values must be numbers")
+            return
+        for r in ratios:
+            if r < 0.0 or r > 1.0:
+                self.send_error(HTTPStatus.BAD_REQUEST, "bbox ratios must be 0.0-1.0")
+                return
+
+        frame = config.latest_frame
+        if frame is None:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No frame available")
+            return
+        frame = frame.copy()
+        h, w = frame.shape[:2]
+
+        x1 = ratios[0] * w
+        y1 = ratios[1] * h
+        x2 = ratios[2] * w
+        y2 = ratios[3] * h
+        left, top, right, bottom = clamp_box([x1, y1, x2, y2], w, h)
+
+        # Add margin around the crop for context (20% on each side).
+        box_w = right - left
+        box_h = bottom - top
+        margin_x = int(box_w * 0.2)
+        margin_y = int(box_h * 0.2)
+        crop_left = max(0, left - margin_x)
+        crop_top = max(0, top - margin_y)
+        crop_right = min(w, right + margin_x)
+        crop_bottom = min(h, bottom + margin_y)
+        crop = frame[crop_top:crop_bottom, crop_left:crop_right]
+        if crop.size == 0:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Drawn box is too small")
+            return
+
+        # Draw the bounding box on the crop.
+        rel_left = left - crop_left
+        rel_top = top - crop_top
+        rel_right = right - crop_left
+        rel_bottom = bottom - crop_top
+        cv2.rectangle(crop, (rel_left, rel_top), (rel_right, rel_bottom), (0, 180, 255), 2)
+        label = class_name
+        cv2.putText(crop, label, (rel_left, max(rel_top - 6, 12)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 180, 255), 1)
+
+        # Compute normalised bbox within the crop.
+        crop_h, crop_w = crop.shape[:2]
+        cx = (rel_left + rel_right) / 2.0 / crop_w
+        cy = (rel_top + rel_bottom) / 2.0 / crop_h
+        bw = (rel_right - rel_left) / crop_w
+        bh = (rel_bottom - rel_top) / crop_h
+
+        alert_id = uuid4().hex[:12]
+        safe_cls = re.sub(r'[^a-z0-9_]', '_', class_name)
+        snippet_name = f"manual_{alert_id}_0_{safe_cls}.jpg"
+        snippet_dir = config.snippet_dir
+        if snippet_dir:
+            os.makedirs(snippet_dir, exist_ok=True)
+            snippet_path = os.path.join(snippet_dir, snippet_name)
+            cv2.imwrite(snippet_path, crop)
+
+        detection = {
+            "class_name": class_name,
+            "confidence": 1.0,
+            "bbox_xyxy": [left, top, right, bottom],
+            "snippet_file": snippet_name,
+            "snippet_bbox_xywhn": [round(cx, 6), round(cy, 6), round(bw, 6), round(bh, 6)],
+            "training_exported": False,
+        }
+
+        zone = str(getattr(config, "camera_zone", "Zone A"))
+        alert = {
+            "id": alert_id,
+            "status": "new",
+            "timestamp": datetime.now().isoformat(timespec="seconds"),
+            "alert_reason": "manual_annotation",
+            "zone": zone,
+            "frame_size": {"width": w, "height": h},
+            "consumption_motion_detected": False,
+            "consumption_motion_score": 0.0,
+            "hand_to_mouth_source": "none",
+            "hand_to_mouth_event_count": 0,
+            "video_file": None,
+            "video_mime": "",
+            "detections": [detection],
+        }
+
+        with config.alert_lock:
+            append_alert(
+                config.alert_log,
+                alert,
+                summary_csv_path=config.detection_summary_csv,
+            )
+        self._send_json({"ok": True, "alert_id": alert_id}, HTTPStatus.CREATED)
 
     def log_message(self, format, *args):
         return

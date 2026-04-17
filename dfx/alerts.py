@@ -307,7 +307,7 @@ def remember_alert_objects(config, detections: list[dict], now_ts: float) -> Non
         config.alert_object_history.append((class_name, x, y, box_diag, float(now_ts)))
 
 
-def _clamp_box(bounds: list[float], frame_width: int, frame_height: int) -> tuple[int, int, int, int]:
+def clamp_box(bounds: list[float], frame_width: int, frame_height: int) -> tuple[int, int, int, int]:
     """Clamp a float bbox into valid image coordinates."""
     x1, y1, x2, y2 = bounds
     left = max(0, min(frame_width - 1, int(round(float(x1)))))
@@ -365,7 +365,7 @@ def add_detection_snippets(
         bbox = det.get("bbox_xyxy")
         if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
             continue
-        item_left, item_top, item_right, item_bottom = _clamp_box(list(bbox), width, height)
+        item_left, item_top, item_right, item_bottom = clamp_box(list(bbox), width, height)
         person_box = _nearest_person_box(
             (item_left, item_top, item_right, item_bottom),
             context_detections,

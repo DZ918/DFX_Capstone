@@ -1,0 +1,3 @@
+alert_id,timestamp,date,weekday,time,zone,category,confidence,status,consumption_motion_detected,consumption_motion_score,snippet_file
+b83badcf87f8,2026-04-17T19:17:22,2026-04-17,Friday,19:17:22,Zone A,bottle,1.0,new,False,0.0,manual_b83badcf87f8_0_bottle.jpg
+2551fc4a2f53,2026-04-17T19:24:23,2026-04-17,Friday,19:24:23,Zone A,bottle,1.0,new,False,0.0,manual_2551fc4a2f53_0_bottle.jpg
