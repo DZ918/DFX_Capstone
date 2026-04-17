@@ -3,8 +3,10 @@
 import argparse
 import glob
 import os
+import queue
 import sys
 import threading
+import time
 from http.server import ThreadingHTTPServer
 
 # Import the modular architecture to prevent code duplication
@@ -16,6 +18,7 @@ from dfx.gpu import (
     prepare_model_for_inference,
 )
 from dfx.camera import camera_worker
+from dfx.alerts import append_alert, create_alert
 from dfx.server import DashboardHandler, HTML_PAGE as DASHBOARD_HTML_PAGE
 from dfx.settings import DashboardConfig
 from dfx.constants import DEFAULT_MAP_IMAGE_PATH, INFERENCE_CLASS_NAMES
@@ -56,6 +59,70 @@ class StandaloneDashboardHandler(DashboardHandler):
             return
         # Route all other API endpoints to the shared dfx/server.py logic
         super().do_GET()
+
+
+def _frame_relay_worker(config):
+    """Move encoded frames from the producer queue into the shared latest-frame snapshot."""
+    while not config.stop:
+        frame_queue = getattr(config, "frame_queue", None)
+        if frame_queue is None:
+            time.sleep(0.05)
+            continue
+        try:
+            frame, jpeg_payload, frame_ts = frame_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
+        config.latest_frame = frame
+        config.latest_jpeg = jpeg_payload
+        config.latest_frame_ts = float(frame_ts)
+        frame_ready_event = getattr(config, "frame_ready_event", None)
+        if frame_ready_event is not None:
+            frame_ready_event.set()
+
+
+def _alert_persist_worker(config):
+    """Persist queued alert jobs without blocking the realtime camera loop."""
+    while True:
+        alert_queue = getattr(config, "alert_queue", None)
+        if alert_queue is None:
+            if config.stop:
+                return
+            time.sleep(0.05)
+            continue
+        if config.stop and alert_queue.empty():
+            return
+        try:
+            payload = alert_queue.get(timeout=0.1)
+        except queue.Empty:
+            continue
+        try:
+            alert = create_alert(
+                payload["frame"],
+                payload["detections"],
+                snippet_dir=payload["snippet_dir"],
+                video_dir=payload["video_dir"],
+                recent_frames=payload["recent_frames"],
+                video_fps=payload["video_fps"],
+                camera_zone=payload["camera_zone"],
+                context_detections=payload["context_detections"],
+                motion_detected=payload["motion_detected"],
+                motion_score=payload["motion_score"],
+                hand_to_mouth_source=payload["hand_to_mouth_source"],
+                hand_to_mouth_event_count=payload["hand_to_mouth_event_count"],
+                attach_video=payload["attach_video"],
+                alert_reason=payload["alert_reason"],
+            )
+            with config.alert_lock:
+                append_alert(
+                    config.alert_log,
+                    alert,
+                    summary_csv_path=config.detection_summary_csv,
+                )
+        except Exception as exc:
+            config.alert_worker_last_error = str(exc)
+            print(f"Warning: failed to persist alert job: {exc}")
+        finally:
+            alert_queue.task_done()
 
 
 def main():
@@ -130,6 +197,17 @@ def main():
         test_mode=args.test,
     )
     config.inference_device = inference_device
+    config.frame_queue = queue.Queue(maxsize=2)
+    config.frame_ready_event = threading.Event()
+    config.latest_frame_ts = 0.0
+    config.alert_queue = queue.Queue(maxsize=3)
+    config.alert_worker_last_error = ""
+    config.alert_jobs_dropped = 0
+
+    frame_relay_worker = threading.Thread(target=_frame_relay_worker, args=(config,), daemon=True)
+    frame_relay_worker.start()
+    alert_persist_worker = threading.Thread(target=_alert_persist_worker, args=(config,), daemon=True)
+    alert_persist_worker.start()
 
     if not args.test:
         worker = threading.Thread(target=camera_worker, args=(config, args.cam), daemon=True)
@@ -142,6 +220,7 @@ def main():
         server.serve_forever()
     finally:
         config.stop = True
+        config.frame_ready_event.set()
 
 if __name__ == "__main__":
     sys.exit(main())

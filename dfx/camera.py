@@ -4,9 +4,11 @@ import glob
 import json
 import math
 import platform
+import queue
 import subprocess
 import time
 from collections import deque
+from copy import deepcopy
 
 try:
     import cv2
@@ -119,6 +121,140 @@ def list_camera_devices(max_devices: int = 8) -> list[dict]:
     return [device for device in devices if device["available"]] or devices[:1]
 
 
+def _publish_frame(config, frame, jpeg_quality: int):
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        frame,
+        [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)],
+    )
+    jpeg_payload = encoded.tobytes() if ok else None
+    frame_packet = (frame, jpeg_payload, time.time())
+
+    frame_queue = getattr(config, "frame_queue", None)
+    if frame_queue is not None:
+        try:
+            frame_queue.put_nowait(frame_packet)
+        except queue.Full:
+            # Keep only fresh frames under load by dropping one stale queued packet.
+            try:
+                frame_queue.get_nowait()
+            except queue.Empty:
+                pass
+            try:
+                frame_queue.put_nowait(frame_packet)
+            except queue.Full:
+                pass
+        return
+
+    # Compatibility fallback if queue-based handoff is unavailable.
+    with config.frame_lock:
+        config.latest_frame = frame
+        config.latest_jpeg = jpeg_payload
+
+
+def _publish_status_frame(config, width: int, height: int, text: str, jpeg_quality: int):
+    """Render and publish a simple status frame (camera off/unavailable)."""
+    status = make_status_frame(width or 640, height or 360, text)
+    if status is not None:
+        _publish_frame(config, status, jpeg_quality)
+
+
+def _reset_alert_debounce_state(config):
+    """Reset debounce/arming counters used by initial and follow-up alerts."""
+    config.consecutive = 0
+    config.clear_count = 0
+    config.armed = True
+    config.stationary_first_alert_ts = 0.0
+    config.stationary_followup_sent = False
+
+
+def _reset_motion_and_person_state(config):
+    """Reset motion/person-derived state when camera or detection is disabled."""
+    config.motion_event_times.clear()
+    config.last_motion_active = False
+    config.last_food_seen_ts = 0.0
+    config.occlusion_motion_until = 0.0
+    config.person_proxy_prev_gray = None
+    config.person_proxy_active_until = 0.0
+    config.person_proxy_trigger_streak = 0
+    config.food_motion_confirm_streak = 0
+    config.person_alert_history.clear()
+    config.alert_object_history.clear()
+    config.motion_tracks.clear()
+    config.next_motion_track_id = 1
+
+
+def _is_same_person_suppressed(config, alert_person_center, wall_now: float, frame_diag: float) -> bool:
+    """Return True when a recent alert likely belongs to the same person."""
+    if alert_person_center is None:
+        return False
+    # Keep only recent person-alert entries in the configured time window.
+    while (
+        config.person_alert_history
+        and (wall_now - float(config.person_alert_history[0][2])) > SAME_PERSON_ALERT_WINDOW_SECONDS
+    ):
+        config.person_alert_history.popleft()
+    suppression_distance = SAME_PERSON_SUPPRESSION_DISTANCE_RATIO * max(1.0, frame_diag)
+    matched_alerts = 0
+    for px, py, pts in config.person_alert_history:
+        if (wall_now - float(pts)) > SAME_PERSON_ALERT_WINDOW_SECONDS:
+            continue
+        distance = math.hypot(alert_person_center[0] - px, alert_person_center[1] - py)
+        if distance <= suppression_distance:
+            matched_alerts += 1
+    return matched_alerts >= SAME_PERSON_MAX_ALERTS_IN_WINDOW
+
+
+def _persist_alert_synchronously(config, payload: dict):
+    """Compatibility path: persist one alert inline when no alert queue is configured."""
+    alert = create_alert(
+        payload["frame"],
+        payload["detections"],
+        snippet_dir=payload["snippet_dir"],
+        video_dir=payload["video_dir"],
+        recent_frames=payload["recent_frames"],
+        video_fps=payload["video_fps"],
+        camera_zone=payload["camera_zone"],
+        context_detections=payload["context_detections"],
+        motion_detected=payload["motion_detected"],
+        motion_score=payload["motion_score"],
+        hand_to_mouth_source=payload["hand_to_mouth_source"],
+        hand_to_mouth_event_count=payload["hand_to_mouth_event_count"],
+        attach_video=payload["attach_video"],
+        alert_reason=payload["alert_reason"],
+    )
+    with config.alert_lock:
+        append_alert(
+            config.alert_log,
+            alert,
+            summary_csv_path=config.detection_summary_csv,
+        )
+
+
+def _enqueue_alert_job(config, payload: dict) -> bool:
+    """Queue one alert job for background persistence; drops stale jobs under sustained load."""
+    alert_queue = getattr(config, "alert_queue", None)
+    if alert_queue is None:
+        return False
+    try:
+        alert_queue.put_nowait(payload)
+        return True
+    except queue.Full:
+        # Preserve recent alerts by evicting one stale queued item.
+        try:
+            alert_queue.get_nowait()
+            alert_queue.task_done()
+        except queue.Empty:
+            pass
+        try:
+            alert_queue.put_nowait(payload)
+            config.alert_jobs_dropped = int(getattr(config, "alert_jobs_dropped", 0)) + 1
+            return True
+        except queue.Full:
+            config.alert_jobs_dropped = int(getattr(config, "alert_jobs_dropped", 0)) + 1
+            return False
+
+
 def camera_worker(config, cam_index: int):
     """Capture frames, run detection, update the stream frame, and create alerts."""
     if cv2 is None:
@@ -160,33 +296,13 @@ def camera_worker(config, cam_index: int):
                     cap = None
                     active_cam_index = camera_index
                 # Turning the camera off also resets the alert state machine.
-                config.consecutive = 0
-                config.clear_count = 0
-                config.armed = True
-                config.stationary_first_alert_ts = 0.0
-                config.stationary_followup_sent = False
-                config.motion_event_times.clear()
-                config.last_motion_active = False
-                config.last_food_seen_ts = 0.0
-                config.occlusion_motion_until = 0.0
-                config.person_proxy_prev_gray = None
-                config.person_proxy_active_until = 0.0
-                config.person_proxy_trigger_streak = 0
-                config.food_motion_confirm_streak = 0
-                config.person_alert_history.clear()
-                config.alert_object_history.clear()
-                config.motion_tracks.clear()
-                config.next_motion_track_id = 1
+                _reset_alert_debounce_state(config)
+                _reset_motion_and_person_state(config)
                 last_detections = []
                 last_motion_detected = False
                 last_motion_score = 0.0
                 recent_frames.clear()
-                paused = make_status_frame(out_width or 640, out_height or 360, "Camera is OFF")
-                if paused is not None:
-                    ok, encoded = cv2.imencode(".jpg", paused, [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality])
-                    with config.frame_lock:
-                        config.latest_frame = paused
-                        config.latest_jpeg = encoded.tobytes() if ok else None
+                _publish_status_frame(config, out_width, out_height, "Camera is OFF", jpeg_quality)
                 time.sleep(0.15)
                 continue
 
@@ -204,20 +320,13 @@ def camera_worker(config, cam_index: int):
                 if not cap.isOpened():
                     cap.release()
                     cap = None
-                    unavailable = make_status_frame(
-                        out_width or 640,
-                        out_height or 360,
+                    _publish_status_frame(
+                        config,
+                        out_width,
+                        out_height,
                         f"Camera {camera_index} unavailable",
+                        jpeg_quality,
                     )
-                    if unavailable is not None:
-                        ok, encoded = cv2.imencode(
-                            ".jpg",
-                            unavailable,
-                            [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality],
-                        )
-                        with config.frame_lock:
-                            config.latest_frame = unavailable
-                            config.latest_jpeg = encoded.tobytes() if ok else None
                     time.sleep(1.0)
                     continue
                 active_cam_index = camera_index
@@ -367,18 +476,7 @@ def camera_worker(config, cam_index: int):
                     last_motion_detected = motion_detected
                     last_motion_score = motion_score
             else:
-                config.motion_tracks.clear()
-                config.next_motion_track_id = 1
-                config.motion_event_times.clear()
-                config.last_motion_active = False
-                config.last_food_seen_ts = 0.0
-                config.occlusion_motion_until = 0.0
-                config.person_proxy_prev_gray = None
-                config.person_proxy_active_until = 0.0
-                config.person_proxy_trigger_streak = 0
-                config.food_motion_confirm_streak = 0
-                config.person_alert_history.clear()
-                config.alert_object_history.clear()
+                _reset_motion_and_person_state(config)
                 last_detections = []
                 last_motion_detected = False
                 last_motion_score = 0.0
@@ -441,22 +539,12 @@ def camera_worker(config, cam_index: int):
 
             same_person_suppressed = False
             alert_person_center = select_alert_person_center(person_detections, detections)
-            if alert_person_center is not None:
-                # Keep only recent person-alert entries in the configured time window.
-                while (
-                    config.person_alert_history
-                    and (wall_now - float(config.person_alert_history[0][2])) > SAME_PERSON_ALERT_WINDOW_SECONDS
-                ):
-                    config.person_alert_history.popleft()
-                suppression_distance = SAME_PERSON_SUPPRESSION_DISTANCE_RATIO * max(1.0, frame_diag)
-                matched_alerts = 0
-                for px, py, pts in config.person_alert_history:
-                    if (wall_now - float(pts)) > SAME_PERSON_ALERT_WINDOW_SECONDS:
-                        continue
-                    distance = math.hypot(alert_person_center[0] - px, alert_person_center[1] - py)
-                    if distance <= suppression_distance:
-                        matched_alerts += 1
-                same_person_suppressed = matched_alerts >= SAME_PERSON_MAX_ALERTS_IN_WINDOW
+            same_person_suppressed = _is_same_person_suppressed(
+                config,
+                alert_person_center,
+                wall_now,
+                frame_diag,
+            )
 
             should_alert = (
                 not same_person_suppressed
@@ -470,31 +558,27 @@ def camera_worker(config, cam_index: int):
                     reason = "new_object"
                 elif stationary_followup_trigger:
                     reason = "stationary_followup"
-                alert = create_alert(
-                    frame,
-                    detections,
-                    snippet_dir=config.snippet_dir,
-                    video_dir=config.video_dir,
-                    recent_frames=list(recent_frames),
-                    video_fps=stream_fps,
-                    camera_zone=camera_zone,
-                    context_detections=all_detections,
-                    motion_detected=motion_detected,
-                    motion_score=motion_score,
-                    hand_to_mouth_source=motion_source,
-                    hand_to_mouth_event_count=len(config.motion_event_times),
-                    attach_video=(
+                alert_payload = {
+                    "frame": frame.copy(),
+                    "detections": deepcopy(detections),
+                    "snippet_dir": config.snippet_dir,
+                    "video_dir": config.video_dir,
+                    "recent_frames": list(recent_frames),
+                    "video_fps": stream_fps,
+                    "camera_zone": camera_zone,
+                    "context_detections": deepcopy(all_detections),
+                    "motion_detected": motion_detected,
+                    "motion_score": motion_score,
+                    "hand_to_mouth_source": motion_source,
+                    "hand_to_mouth_event_count": len(config.motion_event_times),
+                    "attach_video": (
                         motion_burst_trigger
                         and (bool(detections) or bool(person_detections))
                     ),
-                    alert_reason=reason,
-                )
-                with config.alert_lock:
-                    append_alert(
-                        config.alert_log,
-                        alert,
-                        summary_csv_path=config.detection_summary_csv,
-                    )
+                    "alert_reason": reason,
+                }
+                if not _enqueue_alert_job(config, alert_payload):
+                    _persist_alert_synchronously(config, alert_payload)
                 config.last_alert_ts = wall_now
                 remember_alert_objects(config, detections, wall_now)
                 if alert_person_center is not None:
@@ -556,14 +640,7 @@ def camera_worker(config, cam_index: int):
                     ),
                 )
 
-            ok, encoded = cv2.imencode(
-                ".jpg",
-                annotated,
-                [int(cv2.IMWRITE_JPEG_QUALITY), jpeg_quality],
-            )
-            with config.frame_lock:
-                config.latest_frame = annotated
-                config.latest_jpeg = encoded.tobytes() if ok else None
+            _publish_frame(config, annotated, jpeg_quality)
 
             target_loop_delay = 1.0 / max(1.0, stream_fps)
             remaining = target_loop_delay - (time.perf_counter() - loop_started_at)

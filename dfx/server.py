@@ -448,10 +448,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.end_headers()
         try:
             while True:
-                with config.frame_lock:
-                    payload = None if config.latest_jpeg is None else bytes(config.latest_jpeg)
+                payload_ref = config.latest_jpeg
+                payload = None if payload_ref is None else bytes(payload_ref)
                 if payload is None:
-                    time.sleep(0.05)
+                    frame_ready_event = getattr(config, "frame_ready_event", None)
+                    if frame_ready_event is not None:
+                        frame_ready_event.wait(timeout=0.05)
+                    else:
+                        time.sleep(0.05)
                     continue
                 with config.settings_lock:
                     stream_fps = float(config.stream_fps)

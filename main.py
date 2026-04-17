@@ -135,7 +135,14 @@ def append_alert(log_path: str | None, alert: dict) -> None:
         json.dump(alerts, handle, indent=2)
 
 
-def _add_detection_snippets(
+def _safe_token(value: str) -> str:
+    """Convert a free-form label into a filesystem-safe token."""
+    token = "".join(ch if ch.isalnum() else "_" for ch in value.strip().lower())
+    token = token.strip("_")
+    return token or "item"
+
+
+def add_detection_snippets(
     frame,
     detections: list[dict],
     snippet_dir: str | None,
@@ -155,11 +162,37 @@ def _add_detection_snippets(
         crop = frame[top:bottom, left:right]
         if crop.size == 0:
             continue
-        class_token = safe_token(det.get("class_name", "item"))
+        class_token = _safe_token(det.get("class_name", "item"))
         snippet_file = f"{alert_id}_{idx}_{class_token}.jpg"
         snippet_path = os.path.join(snippet_dir, snippet_file)
         if cv2.imwrite(snippet_path, crop):
             det["snippet_file"] = snippet_file
+    return detections
+
+
+def detections_from_result(result, allowed_names: set[str] | None = None) -> list[dict]:
+    """Normalize one YOLO prediction result into plain JSON-serializable dicts."""
+    detections: list[dict] = []
+    if result.boxes is None or len(result.boxes) == 0:
+        return detections
+    names = result.names
+    for idx in range(len(result.boxes)):
+        x1, y1, x2, y2 = (float(v) for v in result.boxes.xyxy[idx])
+        conf = float(result.boxes.conf[idx])
+        cls_id = int(result.boxes.cls[idx])
+        class_name = names.get(cls_id, str(cls_id))
+        normalized = class_name.strip().lower()
+        if allowed_names and normalized not in allowed_names:
+            continue
+        detections.append(
+            {
+                "class_id": cls_id,
+                "class_name": class_name,
+                "confidence": round(conf, 4),
+                "bbox_xyxy": [round(x1, 2), round(y1, 2), round(x2, 2), round(y2, 2)],
+                "center_xy": [round((x1 + x2) / 2, 2), round((y1 + y2) / 2, 2)],
+            }
+        )
     return detections
 
 
@@ -242,14 +275,14 @@ def run_webcam(
                     "status": "new",
                     "timestamp": datetime.now().isoformat(timespec="seconds"),
                     "frame_size": {"width": int(frame.shape[1]), "height": int(frame.shape[0])},
-                    "detections": _add_detection_snippets(
+                    "detections": add_detection_snippets(
                         frame,
                         detections,
                         snippet_dir=snippet_dir,
                         alert_id=alert_id,
                     ),
                 }
-                _append_alert(alert_log, alert)
+                append_alert(alert_log, alert)
                 last_alert_ts = now
                 armed = False
 
