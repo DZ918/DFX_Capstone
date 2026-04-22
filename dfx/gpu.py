@@ -165,8 +165,8 @@ def prepare_model_for_inference(model: Any, device: str | None = None) -> str:
     return selected_device
 
 
-def predict_with_fallback(model: Any, source: Any, **kwargs):
-    """Run ``model.predict`` while tolerating older Ultralytics keyword support."""
+def _build_predict_attempts(kwargs: dict[str, Any]) -> list[dict[str, Any]]:
+    """Build a small set of compatible predict kwargs for older Ultralytics releases."""
     attempts: list[dict[str, Any]] = []
     seen_signatures: set[tuple[str, ...]] = set()
     for drop_keys in ((), ("classes",), ("device",), ("classes", "device")):
@@ -176,17 +176,86 @@ def predict_with_fallback(model: Any, source: Any, **kwargs):
             continue
         seen_signatures.add(signature)
         attempts.append(attempt)
+    return attempts
+
+
+def _predict_with_compatible_kwargs(model: Any, source: Any, kwargs: dict[str, Any]):
+    """Run ``model.predict`` while tolerating older Ultralytics keyword support."""
+    attempts = _build_predict_attempts(kwargs)
 
     last_error: Exception | None = None
     for attempt in attempts:
         try:
-            return model.predict(source, **attempt)
+            return model.predict(source, **attempt), attempt
         except TypeError as exc:
             last_error = exc
 
     if last_error is not None:
         raise last_error
-    return model.predict(source, **kwargs)
+    return model.predict(source, **kwargs), kwargs
+
+
+def _clear_cuda_state():
+    """Release any cached CUDA allocations after an inference failure."""
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            if hasattr(torch.cuda, "ipc_collect"):
+                torch.cuda.ipc_collect()
+    except Exception:
+        pass
+
+
+def _is_cuda_oom_error(exc: Exception) -> bool:
+    """Return whether an exception looks like a CUDA out-of-memory failure."""
+    try:
+        import torch
+
+        if isinstance(exc, torch.OutOfMemoryError):
+            return True
+    except Exception:
+        pass
+    message = str(exc).strip().lower()
+    return "out of memory" in message or "cuda out of memory" in message
+
+
+def predict_with_fallback(model: Any, source: Any, **kwargs):
+    """Run ``model.predict`` with compatibility and CUDA OOM fallback handling."""
+    attempt_kwargs = dict(kwargs)
+    forced_device = str(getattr(model, "_dfx_inference_device_override", "")).strip()
+    requested_device = str(attempt_kwargs.get("device", "")).strip()
+    if forced_device and requested_device.startswith("cuda"):
+        attempt_kwargs["device"] = forced_device
+
+    try:
+        results, used_kwargs = _predict_with_compatible_kwargs(model, source, attempt_kwargs)
+        if "device" in used_kwargs:
+            model._dfx_inference_device_override = str(used_kwargs["device"])
+        return results
+    except Exception as exc:
+        active_device = str(attempt_kwargs.get("device", "")).strip().lower()
+        if not active_device.startswith("cuda") or not _is_cuda_oom_error(exc):
+            raise
+
+        logger.warning("CUDA inference ran out of memory; retrying on CPU: %s", exc)
+        _clear_cuda_state()
+        if hasattr(model, "predictor"):
+            try:
+                model.predictor = None
+            except Exception:
+                pass
+        try:
+            prepare_model_for_inference(model, "cpu")
+        except Exception as move_exc:
+            logger.warning("Could not move model to CPU after CUDA OOM: %s", move_exc)
+
+        cpu_kwargs = dict(kwargs)
+        cpu_kwargs["device"] = "cpu"
+        results, _ = _predict_with_compatible_kwargs(model, source, cpu_kwargs)
+        model._dfx_inference_device_override = "cpu"
+        return results
 
 
 def export_tensorrt(model_path: str, imgsz: int = 640, half: bool = True) -> str | None:

@@ -23,7 +23,15 @@ fi
 
 case "$MODE" in
 	dashboard)
-		exec env PYTHON="$PYTHON_BIN" "${SCRIPT_DIR}/run_dashboard.sh" --cam 0 --model yolov8n.pt "$@" \
+			exec env PYTHON="$PYTHON_BIN" "${SCRIPT_DIR}/run_dashboard.sh" \
+				--cam 0 \
+				--model yolov8n.pt \
+				--inference-imgsz 320 \
+				--max-inference-fps 4 \
+				--fps 6 \
+				--jpeg-quality 65 \
+				--no-motion-enabled \
+				"$@" \
 			2> >(grep -vE 'NvMapMem|cap_v4l\.cpp|VIDIOC_G_INPUT|obsensor_uvc_stream_channel|video4linux2' >&2)
 		;;
 	image)
@@ -43,11 +51,12 @@ Usage:
 
 Defaults:
   - Uses /home/user/dfx_env/bin/python when available
-  - Starts dashboard with --cam 0 --model yolov8n.pt
+	- Starts dashboard with Jetson-safe defaults for imgsz/FPS/JPEG/motion
 
 Examples:
   ./start_gpu.sh
   ./start_gpu.sh dashboard --cam 1
+	./start_gpu.sh dashboard --motion-enabled --inference-imgsz 640
   ./start_gpu.sh image ./runs/detect/training_data/runs/smoke/val_batch0_pred.jpg --out /tmp/out.jpg
 EOF
 		;;

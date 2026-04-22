@@ -75,6 +75,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/settings":
             self._send_settings()
             return
+        if parsed.path == "/cameras/active":
+            self._send_active_cameras()
+            return
         if parsed.path == "/cameras":
             self._send_cameras()
             return
@@ -88,7 +91,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_map_image()
             return
         if parsed.path == "/snapshot":
-            self._send_snapshot()
+            params = parse_qs(parsed.query)
+            camera_values = params.get("camera", [])
+            self._send_snapshot(camera_values[0] if camera_values else None)
             return
         if parsed.path == "/classes":
             self._send_classes()
@@ -100,12 +105,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_video(parsed.path.removeprefix("/videos/"))
             return
         if parsed.path == "/stream":
+            params = parse_qs(parsed.query)
+            camera_values = params.get("camera", [])
+            if camera_values:
+                self._stream_preview_mjpeg(camera_values[0])
+                return
             self._stream_mjpeg()
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/cameras/add":
+            self._add_active_camera()
+            return
+        if parsed.path == "/cameras/remove":
+            self._remove_active_camera()
+            return
         if parsed.path == "/alerts/manage":
             self._manage_alert()
             return
@@ -230,6 +246,146 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Return the currently probeable webcam devices for the dropdown."""
         self._send_json(list_camera_devices(), HTTPStatus.OK)
 
+    def _camera_manager(self):
+        """Return the optional auxiliary camera preview manager attached to the server."""
+        return getattr(self.server, "camera_manager", None)
+
+    def _resolve_camera_source(self, camera_index_value=None):
+        """Resolve the requested camera into its current frame source and UI label."""
+        config = self.server.config
+        with config.settings_lock:
+            primary_index = int(config.camera_index)
+            primary_zone = str(config.camera_zone)
+
+        if camera_index_value in {None, "", primary_index}:
+            return {
+                "camera_index": primary_index,
+                "zone": primary_zone,
+                "frame": config.latest_frame,
+                "jpeg": config.latest_jpeg,
+            }
+
+        try:
+            requested_index = int(camera_index_value)
+        except (TypeError, ValueError):
+            raise ValueError("Invalid camera index") from None
+
+        if requested_index == primary_index:
+            return {
+                "camera_index": primary_index,
+                "zone": primary_zone,
+                "frame": config.latest_frame,
+                "jpeg": config.latest_jpeg,
+            }
+
+        camera_manager = self._camera_manager()
+        if camera_manager is None:
+            raise LookupError("Multi-camera manager unavailable")
+        preview = camera_manager.get_camera(requested_index)
+        if preview is None:
+            raise LookupError(f"Camera {requested_index} is not active")
+        return {
+            "camera_index": requested_index,
+            "zone": f"Camera {requested_index}",
+            "frame": preview.get_frame(),
+            "jpeg": preview.get_jpeg(),
+        }
+
+    def _sync_camera_manager(self, config):
+        """Keep the preview manager aligned with the current primary camera settings."""
+        camera_manager = self._camera_manager()
+        if camera_manager is None:
+            return
+        with config.settings_lock:
+            camera_index = int(config.camera_index)
+            stream_fps = float(config.stream_fps)
+            width = int(config.width)
+            height = int(config.height)
+            jpeg_quality = int(config.jpeg_quality)
+        camera_manager.update_primary_camera(camera_index)
+        camera_manager.update_stream_settings(
+            stream_fps=stream_fps,
+            width=width,
+            height=height,
+            jpeg_quality=jpeg_quality,
+        )
+
+    def _send_active_cameras(self):
+        """Return the primary camera plus any auxiliary preview cameras shown in the grid."""
+        config = self.server.config
+        self._sync_camera_manager(config)
+        with config.settings_lock:
+            primary_index = int(config.camera_index)
+            camera_enabled = bool(config.camera_enabled)
+        primary_available = bool(getattr(config, "camera_available", camera_enabled))
+        primary_error = str(getattr(config, "camera_error", ""))
+        if not camera_enabled:
+            primary_available = False
+            if not primary_error:
+                primary_error = "Camera is OFF"
+        cameras = [
+            {
+                "index": primary_index,
+                "role": "primary",
+                "available": primary_available,
+                "error": primary_error,
+                "stream_url": "/stream",
+            }
+        ]
+        camera_manager = self._camera_manager()
+        if camera_manager is not None:
+            for preview in camera_manager.status_snapshot():
+                cameras.append(
+                    {
+                        **preview,
+                        "role": "preview",
+                        "stream_url": f"/stream?camera={int(preview['index'])}",
+                    }
+                )
+        self._send_json(
+            {
+                "primary_camera_index": primary_index,
+                "cameras": cameras,
+            },
+            HTTPStatus.OK,
+        )
+
+    def _add_active_camera(self):
+        """Start one auxiliary preview camera without restarting the dashboard."""
+        camera_manager = self._camera_manager()
+        if camera_manager is None:
+            self._send_json({"ok": False, "error": "Multi-camera manager unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return
+        try:
+            payload = self._read_json_body()
+        except ValueError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        result = camera_manager.add_camera(payload.get("index"))
+        if not result.get("ok"):
+            error = str(result.get("error", "Could not add camera"))
+            status = HTTPStatus.CONFLICT if "already" in error.lower() else HTTPStatus.BAD_REQUEST
+            self._send_json(result, status)
+            return
+        self._send_json(result, HTTPStatus.OK)
+
+    def _remove_active_camera(self):
+        """Stop one auxiliary preview camera without restarting the dashboard."""
+        camera_manager = self._camera_manager()
+        if camera_manager is None:
+            self._send_json({"ok": False, "error": "Multi-camera manager unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
+            return
+        try:
+            payload = self._read_json_body()
+        except ValueError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        result = camera_manager.remove_camera(payload.get("index"))
+        if not result.get("ok"):
+            self._send_json(result, HTTPStatus.NOT_FOUND)
+            return
+        self._send_json(result, HTTPStatus.OK)
+
     def _update_settings(self):
         """Apply settings posted from the dashboard form."""
         config: DashboardConfig = self.server.config
@@ -239,12 +395,14 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
             return
+        self._sync_camera_manager(config)
         self._send_json({"ok": True, "settings": updated}, HTTPStatus.OK)
 
     def _reset_settings(self):
         """Restore runtime settings to the startup defaults."""
         config: DashboardConfig = self.server.config
         updated = reset_runtime_settings(config)
+        self._sync_camera_manager(config)
         self._send_json({"ok": True, "settings": updated}, HTTPStatus.OK)
 
     def _send_train_status(self):
@@ -484,10 +642,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (BrokenPipeError, ConnectionResetError):
             return
 
-    def _send_snapshot(self):
-        """Return the current camera frame as a single JPEG image."""
+    def _stream_preview_mjpeg(self, camera_index_value: str):
+        """Stream one auxiliary preview camera as multipart MJPEG."""
+        camera_manager = self._camera_manager()
+        if camera_manager is None:
+            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "Multi-camera manager unavailable")
+            return
+        try:
+            camera_index = int(camera_index_value)
+        except (TypeError, ValueError):
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid camera index")
+            return
+        preview = camera_manager.get_camera(camera_index)
+        if preview is None:
+            self.send_error(HTTPStatus.NOT_FOUND, "Camera not active")
+            return
         config = self.server.config
-        payload = config.latest_jpeg
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        try:
+            while True:
+                preview = camera_manager.get_camera(camera_index)
+                if preview is None:
+                    return
+                payload = preview.get_jpeg()
+                if payload is None:
+                    preview.frame_ready_event.wait(timeout=0.05)
+                    continue
+                with config.settings_lock:
+                    stream_fps = float(config.stream_fps)
+                delay = 1.0 / max(1.0, stream_fps)
+                self.wfile.write(b"--frame\r\n")
+                self.wfile.write(b"Content-Type: image/jpeg\r\n")
+                self.wfile.write(f"Content-Length: {len(payload)}\r\n\r\n".encode("utf-8"))
+                self.wfile.write(payload)
+                self.wfile.write(b"\r\n")
+                time.sleep(delay)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def _send_snapshot(self, camera_index_value=None):
+        """Return the current camera frame as a single JPEG image."""
+        try:
+            source = self._resolve_camera_source(camera_index_value)
+        except ValueError as exc:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        except LookupError as exc:
+            self.send_error(HTTPStatus.NOT_FOUND, str(exc))
+            return
+        payload = source["jpeg"]
         if payload is None:
             self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No frame available")
             return
@@ -539,7 +745,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 self.send_error(HTTPStatus.BAD_REQUEST, "bbox ratios must be 0.0-1.0")
                 return
 
-        frame = config.latest_frame
+        try:
+            source = self._resolve_camera_source(payload.get("camera_index"))
+        except ValueError as exc:
+            self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
+            return
+        except LookupError as exc:
+            self.send_error(HTTPStatus.NOT_FOUND, str(exc))
+            return
+
+        frame = source["frame"]
         if frame is None:
             self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No frame available")
             return
@@ -601,13 +816,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "training_exported": False,
         }
 
-        zone = str(getattr(config, "camera_zone", "Zone A"))
+        zone = str(source.get("zone", getattr(config, "camera_zone", "Zone A")))
+        camera_index = int(source.get("camera_index", getattr(config, "camera_index", 0)))
         alert = {
             "id": alert_id,
             "status": "new",
             "timestamp": datetime.now().isoformat(timespec="seconds"),
             "alert_reason": "manual_annotation",
             "zone": zone,
+            "camera_index": camera_index,
             "frame_size": {"width": w, "height": h},
             "consumption_motion_detected": False,
             "consumption_motion_score": 0.0,

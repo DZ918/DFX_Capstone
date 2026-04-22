@@ -19,6 +19,7 @@ from dfx.gpu import (
 )
 from dfx.camera import camera_worker
 from dfx.alerts import append_alert, create_alert
+from dfx.multicam import CameraManager
 from dfx.server import DashboardHandler, HTML_PAGE as DASHBOARD_HTML_PAGE
 from dfx.settings import DashboardConfig
 from dfx.constants import DEFAULT_MAP_IMAGE_PATH, INFERENCE_CLASS_NAMES
@@ -213,13 +214,22 @@ def main():
         worker = threading.Thread(target=camera_worker, args=(config, args.cam), daemon=True)
         worker.start()
 
+    camera_manager = CameraManager(
+        primary_camera_index=config.camera_index,
+        stream_fps=config.stream_fps,
+        width=config.width,
+        height=config.height,
+        jpeg_quality=config.jpeg_quality,
+    )
     server = ThreadingHTTPServer((args.host, args.port), StandaloneDashboardHandler)
     server.config = config
+    server.camera_manager = camera_manager
     print(f"Dashboard running at http://{args.host}:{args.port}")
     try:
         server.serve_forever()
     finally:
         config.stop = True
+        camera_manager.shutdown()
         config.frame_ready_event.set()
 
 if __name__ == "__main__":

@@ -50,6 +50,133 @@
       .settings-card { grid-column: 1 / -1; }
       .hidden { display: none !important; }
       .feed { width: 100%; border-radius: 8px; background: #000; }
+      .live-card { display: grid; gap: 12px; }
+      .camera-toolbar {
+        display: flex;
+        align-items: flex-end;
+        justify-content: space-between;
+        gap: 12px;
+        flex-wrap: wrap;
+      }
+      .camera-toolbar-copy {
+        display: grid;
+        gap: 4px;
+      }
+      .camera-toolbar-note {
+        font-size: 12px;
+        color: #6b7280;
+      }
+      .camera-manager-form {
+        display: flex;
+        align-items: flex-end;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .camera-manager-form button {
+        border: 0;
+        border-radius: 8px;
+        padding: 8px 12px;
+        font-size: 12px;
+        color: #fff;
+        background: #1f2937;
+        cursor: pointer;
+      }
+      .camera-manager-form button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      .camera-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        gap: 12px;
+      }
+      .camera-preview-cards { display: contents; }
+      .camera-panel {
+        display: grid;
+        gap: 10px;
+        min-width: 0;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 10px;
+        background: #f8fafc;
+      }
+      .camera-panel.primary-panel { background: #fff; }
+      .camera-panel-empty {
+        align-content: center;
+        min-height: 120px;
+      }
+      .camera-panel-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .camera-panel-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: #111827;
+      }
+      .camera-panel-meta {
+        font-size: 12px;
+        color: #6b7280;
+      }
+      .camera-feed-wrap { width: 100%; }
+      .camera-panel-actions {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .camera-panel-tools {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .camera-status {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 3px 8px;
+        font-size: 11px;
+        font-weight: 700;
+        background: #dbeafe;
+        color: #1d4ed8;
+      }
+      .camera-status.is-error {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .camera-status.is-muted {
+        background: #e5e7eb;
+        color: #374151;
+      }
+      .camera-remove-btn {
+        border: 0;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: #fff;
+        background: #991b1b;
+        cursor: pointer;
+      }
+      .camera-remove-btn:hover { background: #7f1d1d; }
+      .camera-action-btn {
+        border: 0;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: #fff;
+        background: #1f2937;
+        cursor: pointer;
+      }
+      .camera-action-btn:hover { background: #111827; }
+      .camera-grid-status {
+        min-height: 16px;
+        font-size: 12px;
+        color: #374151;
+      }
       .annotate-btn { font-size: 11px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 6px; background: #f0f0f0; color: var(--text); cursor: pointer; margin-left: 8px; vertical-align: middle; }
       .annotate-btn:hover { background: #e0e0e0; }
       h2 { margin: 8px 0 12px; font-size: 16px; }
@@ -360,7 +487,56 @@
                 color: #94a3b8;
                 font-size: 12px;
             }
+      .annotation-modal-card {
+        width: min(1100px, 96vw);
+      }
+      .annotation-modal-body {
+        padding: 12px;
+        background: #020617;
+        display: grid;
+        gap: 12px;
+      }
+      .annotation-canvas-wrap {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: auto;
+        max-height: calc(92vh - 180px);
+        border-radius: 8px;
+        background: #000;
+      }
+      .annotation-feed {
+        display: block;
+        max-width: 100%;
+        height: auto;
+        cursor: crosshair;
+        touch-action: none;
+      }
+      .annotation-controls {
+        display: grid;
+        gap: 8px;
+      }
+      .annotation-controls-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+      .annotation-controls-row select,
+      .annotation-controls-row input {
+        padding: 4px 8px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        font-size: 13px;
+      }
+      .annotation-status {
+        font-size: 12px;
+        min-height: 16px;
+        color: #94a3b8;
+      }
       @media (max-width: 600px) {
+        .camera-toolbar { align-items: stretch; }
+        .camera-manager-form { width: 100%; }
         .settings-row { grid-template-columns: 1fr; }
         .alerts-scroll { height: 58vh; }
       }
@@ -473,23 +649,40 @@
           </div>
         </form>
       </section>
-      <section class="card">
-        <h2>Live Camera Feed <button id="startAnnotateBtn" type="button" class="annotate-btn">Annotate</button></h2>
-        <div id="annotateWrap" style="width:100%;">
-          <img id="feedImg" class="feed" src="/stream" alt="Live camera feed" />
-          <canvas id="annotateCanvas" class="feed" style="display:none; cursor:crosshair;"></canvas>
-        </div>
-        <div id="annotateControls" class="hidden" style="margin-top:8px;">
-          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-            <select id="annotateClass" style="padding:4px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px;">
-              <option value="">Select class...</option>
-            </select>
-            <input id="annotateCustomClass" type="text" placeholder="Or type custom class" maxlength="64" style="padding:4px 8px; border-radius:6px; border:1px solid var(--border); font-size:13px; width:160px;" />
-            <button id="annotateSave" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:#166534; color:#fff; cursor:pointer;">Save</button>
-            <button id="annotateCancel" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:var(--btn); color:#fff; cursor:pointer;">Cancel</button>
-            <button id="annotateRedraw" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:#6b7280; color:#fff; cursor:pointer;">Redraw</button>
+      <section class="card live-card">
+        <div class="camera-toolbar">
+          <div class="camera-toolbar-copy">
+            <h2>Live Camera Feed <button id="startAnnotateBtn" type="button" class="annotate-btn">Annotate</button></h2>
+            <div class="camera-toolbar-note">Primary camera keeps the current alert flow. Use annotate on any live camera view to create manual samples.</div>
           </div>
-          <div id="annotateStatus" style="font-size:12px; margin-top:4px; min-height:16px; color:var(--muted);"></div>
+          <form id="cameraManagerForm" class="camera-manager-form">
+            <label class="settings-field">Add camera index
+              <input id="addCameraIndex" type="number" min="0" max="99" step="1" placeholder="e.g. 1" />
+            </label>
+            <button id="addCameraBtn" type="submit">Add to grid</button>
+            <span id="cameraGridStatus" class="camera-grid-status" aria-live="polite"></span>
+          </form>
+        </div>
+        <div id="cameraGrid" class="camera-grid">
+          <article class="camera-panel primary-panel">
+            <div class="camera-panel-head">
+              <div>
+                <div class="camera-panel-title">Primary feed</div>
+                <div id="primaryCameraMeta" class="camera-panel-meta">Camera 0</div>
+              </div>
+              <span id="primaryCameraStatus" class="camera-status is-muted">Loading...</span>
+            </div>
+            <div class="camera-feed-wrap">
+              <img id="feedImg" class="feed" src="/stream" alt="Live camera feed" />
+            </div>
+            <div class="camera-panel-actions">
+              <div class="camera-panel-meta">Primary feed supports live alerts, manual annotation, and training export.</div>
+              <div class="camera-panel-tools">
+                <button id="primaryAnnotateBtn" class="camera-action-btn" type="button">Annotate</button>
+              </div>
+            </div>
+          </article>
+          <div id="previewCameraCards" class="camera-preview-cards" aria-live="polite"></div>
         </div>
       </section>
       <section class="card alerts-card">
@@ -558,6 +751,31 @@
                 </div>
             </div>
         </div>
+    <div id="annotationModal" class="map-modal" aria-hidden="true">
+      <div class="map-modal-card annotation-modal-card">
+        <div class="map-modal-head">
+          <strong id="annotationModalTitle">Annotate Camera</strong>
+          <button id="annotationModalClose" class="map-modal-close" type="button" aria-label="Close annotation">×</button>
+        </div>
+        <div class="map-modal-body annotation-modal-body">
+          <div class="annotation-canvas-wrap">
+            <canvas id="annotateCanvas" class="feed annotation-feed"></canvas>
+          </div>
+          <div id="annotateControls" class="annotation-controls">
+            <div class="annotation-controls-row">
+              <select id="annotateClass">
+                <option value="">Select class...</option>
+              </select>
+              <input id="annotateCustomClass" type="text" placeholder="Or type custom class" maxlength="64" style="width:160px;" />
+              <button id="annotateSave" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:#166534; color:#fff; cursor:pointer;">Save</button>
+              <button id="annotateCancel" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:var(--btn); color:#fff; cursor:pointer;">Cancel</button>
+              <button id="annotateRedraw" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:#6b7280; color:#fff; cursor:pointer;">Redraw</button>
+            </div>
+            <div id="annotateStatus" class="annotation-status"></div>
+          </div>
+        </div>
+      </div>
+    </div>
     <script>
       // Escape user-controlled strings before placing them into HTML templates.
       function escapeHtml(value) {
@@ -704,6 +922,18 @@
         }
       }
 
+      async function readApiError(res) {
+        const contentType = res.headers.get('content-type') || '';
+        if (contentType.includes('application/json')) {
+          const data = await res.json().catch(() => null);
+          if (data && typeof data.error === 'string' && data.error) {
+            return data.error;
+          }
+        }
+        const text = await res.text().catch(() => '');
+        return text || `HTTP ${res.status}`;
+      }
+
       function setSettingsStatus(message, isError = false) {
         const statusEl = document.getElementById('settingsStatus');
         statusEl.textContent = message || '';
@@ -714,6 +944,210 @@
         const statusEl = document.getElementById('trainStatus');
         statusEl.textContent = message || '';
         statusEl.style.color = isError ? '#b91c1c' : '#374151';
+      }
+
+      let lastActiveCameraFingerprint = '';
+      let lastPrimaryCameraIndex = 0;
+      let openAnnotationForCamera = () => {};
+
+      function setCameraGridStatus(message, isError = false) {
+        const statusEl = document.getElementById('cameraGridStatus');
+        statusEl.textContent = message || '';
+        statusEl.style.color = isError ? '#b91c1c' : '#374151';
+      }
+
+      function setCameraStatusBadge(element, label, state = 'live') {
+        element.textContent = label;
+        element.className = 'camera-status';
+        if (state === 'error') {
+          element.classList.add('is-error');
+          return;
+        }
+        if (state === 'muted') {
+          element.classList.add('is-muted');
+        }
+      }
+
+      function activeCameraFingerprint(cameras) {
+        return cameras
+          .map((camera) => [
+            camera.role || 'preview',
+            Number(camera.index || 0),
+            Boolean(camera.available),
+            camera.error || ''
+          ].join(':'))
+          .join('||');
+      }
+
+      function renderPreviewCameraCard(camera) {
+        const index = Number(camera.index || 0);
+        const card = document.createElement('article');
+        card.className = 'camera-panel';
+        const statusText = camera.available ? 'Live' : (camera.error || 'Unavailable');
+        const statusClass = camera.available ? 'camera-status' : 'camera-status is-error';
+        const metaText = camera.available
+          ? 'Auxiliary preview stream'
+          : (camera.error || 'Waiting for camera');
+        card.innerHTML =
+          `<div class="camera-panel-head">` +
+            `<div>` +
+              `<div class="camera-panel-title">Camera ${index}</div>` +
+              `<div class="camera-panel-meta">Preview feed</div>` +
+            `</div>` +
+            `<span class="${statusClass}">${escapeHtml(statusText)}</span>` +
+          `</div>` +
+          `<div class="camera-feed-wrap">` +
+            `<img class="feed" src="${escapeHtml(camera.stream_url || `/stream?camera=${index}`)}" alt="Camera ${index} preview feed" />` +
+          `</div>` +
+          `<div class="camera-panel-actions">` +
+            `<div class="camera-panel-meta">${escapeHtml(metaText)}</div>` +
+            `<div class="camera-panel-tools">` +
+              `<button class="camera-action-btn" type="button">Annotate</button>` +
+              `<button class="camera-remove-btn" type="button">Remove</button>` +
+            `</div>` +
+          `</div>`;
+        const annotateButton = card.querySelector('.camera-action-btn');
+        const removeButton = card.querySelector('.camera-remove-btn');
+        annotateButton.addEventListener('click', () => {
+          openAnnotationForCamera(index, `Camera ${index}`);
+        });
+        removeButton.addEventListener('click', () => {
+          removeActiveCamera(index, removeButton);
+        });
+        return card;
+      }
+
+      function renderActiveCameras(payload) {
+        const cameras = Array.isArray(payload.cameras) ? payload.cameras : [];
+        const primary = cameras.find((camera) => camera.role === 'primary');
+        const previews = cameras.filter((camera) => camera.role === 'preview');
+        const primaryMeta = document.getElementById('primaryCameraMeta');
+        const primaryStatus = document.getElementById('primaryCameraStatus');
+        const primaryAnnotateButton = document.getElementById('primaryAnnotateBtn');
+        const toolbarAnnotateButton = document.getElementById('startAnnotateBtn');
+        if (primary) {
+          const primaryIndex = Number(primary.index || 0);
+          lastPrimaryCameraIndex = primaryIndex;
+          primaryMeta.textContent = primary.error
+            ? `Camera ${primaryIndex} | ${primary.error}`
+            : `Camera ${primaryIndex}`;
+          primaryAnnotateButton.textContent = `Annotate Camera ${primaryIndex}`;
+          toolbarAnnotateButton.textContent = `Annotate Camera ${primaryIndex}`;
+          setCameraStatusBadge(
+            primaryStatus,
+            primary.available ? 'Primary live' : (primary.error || 'Unavailable'),
+            primary.available ? 'live' : 'error'
+          );
+        } else {
+          lastPrimaryCameraIndex = 0;
+          primaryMeta.textContent = 'Primary camera unavailable';
+          primaryAnnotateButton.textContent = 'Annotate';
+          toolbarAnnotateButton.textContent = 'Annotate';
+          setCameraStatusBadge(primaryStatus, 'Unavailable', 'error');
+        }
+
+        const previewCards = document.getElementById('previewCameraCards');
+        previewCards.innerHTML = '';
+        if (previews.length === 0) {
+          const empty = document.createElement('article');
+          empty.className = 'camera-panel camera-panel-empty';
+          empty.innerHTML =
+            `<div class="camera-panel-title">No auxiliary cameras active</div>` +
+            `<div class="camera-panel-meta">Add a camera index to expand the grid without restarting the dashboard.</div>`;
+          previewCards.appendChild(empty);
+          return;
+        }
+        previews.forEach((camera) => {
+          previewCards.appendChild(renderPreviewCameraCard(camera));
+        });
+      }
+
+      async function refreshActiveCameras(forceRender = false) {
+        try {
+          const res = await fetch('/cameras/active');
+          if (!res.ok) {
+            throw new Error(await readApiError(res));
+          }
+          const payload = await res.json();
+          const cameras = Array.isArray(payload.cameras) ? payload.cameras : [];
+          const nextFingerprint = activeCameraFingerprint(cameras);
+          if (!forceRender && nextFingerprint === lastActiveCameraFingerprint) {
+            return;
+          }
+          lastActiveCameraFingerprint = nextFingerprint;
+          renderActiveCameras(payload);
+        } catch (err) {
+          setCameraGridStatus(err.message || 'Could not load camera grid', true);
+        }
+      }
+
+      async function addActiveCamera(event) {
+        event.preventDefault();
+        const input = document.getElementById('addCameraIndex');
+        const button = document.getElementById('addCameraBtn');
+        const value = Number(input.value);
+        if (!Number.isInteger(value) || value < 0 || value > 99) {
+          setCameraGridStatus('Enter a camera index between 0 and 99', true);
+          return;
+        }
+        button.disabled = true;
+        try {
+          const res = await fetch('/cameras/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ index: value }),
+          });
+          if (!res.ok) {
+            throw new Error(await readApiError(res));
+          }
+          const data = await res.json();
+          if (!data.ok) {
+            throw new Error(data.error || `Could not add camera ${value}`);
+          }
+          input.value = '';
+          setCameraGridStatus(`Camera ${value} added to the grid`);
+          await refreshActiveCameras(true);
+        } catch (err) {
+          setCameraGridStatus(err.message || 'Could not add camera', true);
+        } finally {
+          button.disabled = false;
+        }
+      }
+
+      async function removeActiveCamera(index, button = null) {
+        if (button) {
+          button.disabled = true;
+        }
+        try {
+          const res = await fetch('/cameras/remove', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ index }),
+          });
+          if (!res.ok) {
+            throw new Error(await readApiError(res));
+          }
+          const data = await res.json();
+          if (!data.ok) {
+            throw new Error(data.error || `Could not remove camera ${index}`);
+          }
+          setCameraGridStatus(`Camera ${index} removed from the grid`);
+          await refreshActiveCameras(true);
+        } catch (err) {
+          setCameraGridStatus(err.message || 'Could not remove camera', true);
+        } finally {
+          if (button) {
+            button.disabled = false;
+          }
+        }
+      }
+
+      function setupCameraManager() {
+        const form = document.getElementById('cameraManagerForm');
+        form.addEventListener('submit', addActiveCamera);
+        refreshActiveCameras(true).catch(() => {
+          setCameraGridStatus('Could not load camera grid', true);
+        });
       }
 
       async function refreshTrainStatus() {
@@ -867,6 +1301,7 @@
         const settings = await res.json();
         await loadCameraDevices(settings.camera_index || 0);
         applySettingsToForm(settings);
+        await refreshActiveCameras(true);
         if (showStatus) {
           setSettingsStatus(`Loaded (${settings.updated_at || 'now'})`);
         }
@@ -889,6 +1324,7 @@
           if (data.settings) {
             applySettingsToForm(data.settings);
           }
+          await refreshActiveCameras(true);
           setSettingsStatus('Settings applied');
         } catch (err) {
           setSettingsStatus(err.message || 'Could not save settings', true);
@@ -908,6 +1344,7 @@
           if (data.settings) {
             applySettingsToForm(data.settings);
           }
+          await refreshActiveCameras(true);
           setSettingsStatus('Settings reset to defaults');
         } catch (err) {
           setSettingsStatus(err.message || 'Could not reset settings', true);
@@ -1140,7 +1577,10 @@
       });
       function setupAnnotation() {
         const startBtn = document.getElementById('startAnnotateBtn');
-        const feedImg = document.getElementById('feedImg');
+        const primaryAnnotateBtn = document.getElementById('primaryAnnotateBtn');
+        const modal = document.getElementById('annotationModal');
+        const closeBtn = document.getElementById('annotationModalClose');
+        const titleEl = document.getElementById('annotationModalTitle');
         const canvas = document.getElementById('annotateCanvas');
         const controls = document.getElementById('annotateControls');
         const classSelect = document.getElementById('annotateClass');
@@ -1154,11 +1594,27 @@
         let drawing = false;
         let startX = 0, startY = 0, endX = 0, endY = 0;
         let boxDrawn = false;
+        let annotationCameraIndex = null;
+        let annotationCameraLabel = 'Primary feed';
 
-        function enterAnnotateMode() {
+        function openModal() {
+          modal.classList.add('open');
+          modal.setAttribute('aria-hidden', 'false');
+        }
+
+        function closeModal() {
+          modal.classList.remove('open');
+          modal.setAttribute('aria-hidden', 'true');
+        }
+
+        function enterAnnotateMode(cameraIndex = null, cameraLabel = 'Primary feed') {
+          annotationCameraIndex = cameraIndex;
+          annotationCameraLabel = cameraLabel;
+          titleEl.textContent = `Annotate ${cameraLabel}`;
+          openModal();
           statusEl.textContent = 'Loading snapshot...';
           Promise.all([
-            fetch('/snapshot').then(r => { if (!r.ok) throw new Error('No frame'); return r.blob(); }),
+            fetch(cameraIndex === null ? '/snapshot' : `/snapshot?camera=${encodeURIComponent(cameraIndex)}`).then(r => { if (!r.ok) throw new Error('No frame'); return r.blob(); }),
             fetch('/classes').then(r => r.json())
           ]).then(([blob, classes]) => {
             const img = new Image();
@@ -1167,9 +1623,6 @@
               canvas.width = img.naturalWidth;
               canvas.height = img.naturalHeight;
               ctx.drawImage(img, 0, 0);
-              feedImg.style.display = 'none';
-              canvas.style.display = 'block';
-              controls.classList.remove('hidden');
               boxDrawn = false;
               statusEl.textContent = 'Draw a box around the item.';
               // Populate class dropdown
@@ -1189,12 +1642,13 @@
         }
 
         function exitAnnotateMode() {
-          canvas.style.display = 'none';
-          feedImg.style.display = '';
-          controls.classList.add('hidden');
+          closeModal();
           statusEl.textContent = '';
           snapshotImg = null;
           boxDrawn = false;
+          drawing = false;
+          annotationCameraIndex = null;
+          annotationCameraLabel = 'Primary feed';
         }
 
         function drawOverlay() {
@@ -1280,7 +1734,17 @@
           }
         });
 
-        startBtn.addEventListener('click', enterAnnotateMode);
+        openAnnotationForCamera = (cameraIndex = null, cameraLabel = 'Primary feed') => {
+          enterAnnotateMode(cameraIndex, cameraLabel);
+        };
+
+        startBtn.addEventListener('click', () => {
+          openAnnotationForCamera(lastPrimaryCameraIndex, `Camera ${lastPrimaryCameraIndex}`);
+        });
+        primaryAnnotateBtn.addEventListener('click', () => {
+          openAnnotationForCamera(lastPrimaryCameraIndex, `Camera ${lastPrimaryCameraIndex}`);
+        });
+        closeBtn.addEventListener('click', exitAnnotateMode);
         cancelBtn.addEventListener('click', exitAnnotateMode);
         redrawBtn.addEventListener('click', function() {
           if (snapshotImg) {
@@ -1309,11 +1773,15 @@
             const res = await fetch('/annotate', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
-              body: JSON.stringify({bbox: [x1, y1, x2, y2], class_name: className})
+              body: JSON.stringify({
+                bbox: [x1, y1, x2, y2],
+                class_name: className,
+                camera_index: annotationCameraIndex,
+              })
             });
             const data = await res.json();
             if (data.ok) {
-              statusEl.textContent = 'Saved! Alert ID: ' + data.alert_id;
+              statusEl.textContent = `Saved for ${annotationCameraLabel}. Alert ID: ${data.alert_id}`;
               setTimeout(exitAnnotateMode, 1500);
               refreshAlerts();
             } else {
@@ -1323,16 +1791,29 @@
             statusEl.textContent = 'Error: ' + err.message;
           }
         });
+
+        modal.addEventListener('click', (event) => {
+          if (event.target === modal) {
+            exitAnnotateMode();
+          }
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && modal.classList.contains('open')) {
+            exitAnnotateMode();
+          }
+        });
       }
 
             setupMapModal();
       setupLightbox();
       setupSettingsPanel();
       setupSettingsForm();
+      setupCameraManager();
       setupAnnotation();
       refreshAlerts();
     refreshConsumptionStats();
       refreshTrainStatus();
+      setInterval(refreshActiveCameras, 3000);
       setInterval(refreshAlerts, 2000);
     setInterval(refreshConsumptionStats, 5000);
       setInterval(refreshTrainStatus, 5000);

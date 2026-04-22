@@ -382,6 +382,12 @@ def camera_worker(config, cam_index: int):
                             "device": getattr(config, "inference_device", "cpu"),
                         }
                         results = predict_with_fallback(model, frame, **predict_kwargs)
+                        selected_device = str(
+                            getattr(model, "_dfx_inference_device_override", predict_kwargs["device"])
+                        ).strip() or "cpu"
+                        if selected_device != str(getattr(config, "inference_device", "cpu")):
+                            config.inference_device = selected_device
+                            print(f"Warning: switched inference device to {selected_device}")
                 if inference_ran:
                     result = results[0]
                     all_detections = detections_from_result(result, allowed_names=INFERENCE_CLASS_NAMES)
