@@ -32,6 +32,7 @@ from dfx.constants import (
     DRINK_CONTAINER_CLASS_NAMES,
     HAND_MOUTH_APPROACH_WINDOW_SECONDS,
     HAND_MOUTH_HOLD_SECONDS,
+    HAND_MOUTH_LANDMARK_EMA_ALPHA,
     HAND_MOUTH_LANDMARK_MIN_DETECTION_CONFIDENCE,
     HAND_MOUTH_LANDMARK_MIN_TRACKING_CONFIDENCE,
     HAND_MOUTH_MAX_DISTANCE_RATIO,
@@ -267,6 +268,19 @@ def _distance(point_a, point_b) -> float:
     return math.hypot(float(point_a[0]) - float(point_b[0]), float(point_a[1]) - float(point_b[1]))
 
 
+def _ema_point(previous_xy, current_xy, alpha: float):
+    """Lightweight EMA smoothing for landmark coordinates."""
+    if current_xy is None:
+        return previous_xy
+    if previous_xy is None:
+        return current_xy
+    smooth_alpha = max(0.05, min(0.95, float(alpha)))
+    return (
+        float(previous_xy[0]) + ((float(current_xy[0]) - float(previous_xy[0])) * smooth_alpha),
+        float(previous_xy[1]) + ((float(current_xy[1]) - float(previous_xy[1])) * smooth_alpha),
+    )
+
+
 def _direction_cosine(motion_vector: tuple[float, float], target_vector: tuple[float, float]) -> float:
     """Return cosine similarity between movement and mouth-target vectors."""
     motion_norm = math.hypot(motion_vector[0], motion_vector[1])
@@ -358,18 +372,45 @@ def _hand_mouth_score(distance_ratio: float, dwell_elapsed: float, approach_delt
     """Convert strict landmark geometry into a bounded score used by the alert pipeline."""
     proximity_score = max(0.0, 1.0 - (distance_ratio / max(1e-6, HAND_MOUTH_MAX_DISTANCE_RATIO)))
     dwell_score = min(1.0, dwell_elapsed / max(1e-6, HAND_MOUTH_MIN_DWELL_SECONDS))
-    approach_score = min(1.0, approach_delta_ratio / max(1e-6, HAND_MOUTH_MIN_APPROACH_DELTA_RATIO))
-    direction_score = min(
-        1.0,
-        max(0.0, (direction_cosine - HAND_MOUTH_MIN_DIRECTION_COSINE) / max(1e-6, 1.0 - HAND_MOUTH_MIN_DIRECTION_COSINE)),
-    )
+
+    if HAND_MOUTH_MIN_APPROACH_DELTA_RATIO > 1e-6:
+        approach_score = min(1.0, max(0.0, approach_delta_ratio / HAND_MOUTH_MIN_APPROACH_DELTA_RATIO))
+    else:
+        approach_score = 1.0 if approach_delta_ratio > 0.0 else 0.0
+
+    if HAND_MOUTH_MIN_DIRECTION_COSINE <= 0.0:
+        direction_score = min(1.0, max(0.0, (direction_cosine + 1.0) * 0.5))
+    elif HAND_MOUTH_MIN_DIRECTION_COSINE >= 1.0:
+        direction_score = 1.0 if direction_cosine >= HAND_MOUTH_MIN_DIRECTION_COSINE else 0.0
+    else:
+        direction_score = min(
+            1.0,
+            max(
+                0.0,
+                (direction_cosine - HAND_MOUTH_MIN_DIRECTION_COSINE)
+                / max(1e-6, 1.0 - HAND_MOUTH_MIN_DIRECTION_COSINE),
+            ),
+        )
+
+    very_close = distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 0.55)
+    if very_close:
+        proximity_weight = 0.68
+        dwell_weight = 0.24
+        approach_weight = 0.05
+        direction_weight = 0.03
+    else:
+        proximity_weight = 0.52
+        dwell_weight = 0.28
+        approach_weight = 0.12
+        direction_weight = 0.08
+
     raw_score = (
-        0.50 * proximity_score
-        + 0.28 * dwell_score
-        + 0.14 * approach_score
-        + 0.08 * direction_score
+        (proximity_weight * proximity_score)
+        + (dwell_weight * dwell_score)
+        + (approach_weight * approach_score)
+        + (direction_weight * direction_score)
     )
-    score = min(1.5, max(0.0, raw_score * 1.5))
+    score = min(1.5, max(0.0, raw_score * 1.45))
     if active:
         score = max(score, HAND_MOUTH_SCORE_FLOOR)
     return round(score, 3)
@@ -731,9 +772,16 @@ def detect_person_hand_to_mouth_proxy(
     if closest_finger_xy is None:
         return _handle_hand_mouth_gap(config, now_ts)
 
-    previous_distance_ratio = float(getattr(config, "person_proxy_last_distance_ratio", float("inf")))
     previous_finger_xy = getattr(config, "person_proxy_last_finger_xy", None)
     previous_mouth_xy = getattr(config, "person_proxy_last_mouth_xy", None)
+    smooth_alpha = float(getattr(config, "person_proxy_landmark_ema_alpha", HAND_MOUTH_LANDMARK_EMA_ALPHA))
+    mouth_center = _ema_point(previous_mouth_xy, mouth_center, smooth_alpha)
+    closest_finger_xy = _ema_point(previous_finger_xy, closest_finger_xy, smooth_alpha)
+    if mouth_center is None or closest_finger_xy is None:
+        return _handle_hand_mouth_gap(config, now_ts)
+
+    closest_distance_ratio = _distance(closest_finger_xy, mouth_center) / max(1.0, face_width)
+    previous_distance_ratio = float(getattr(config, "person_proxy_last_distance_ratio", float("inf")))
     approach_delta_ratio = 0.0
     direction_cosine = 0.0
     if math.isfinite(previous_distance_ratio):
@@ -750,28 +798,34 @@ def detect_person_hand_to_mouth_proxy(
         )
         direction_cosine = _direction_cosine(motion_vector, target_vector)
 
-    if (
-        closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.35)
-        and approach_delta_ratio >= HAND_MOUTH_MIN_APPROACH_DELTA_RATIO
+    trajectory_ready = (
+        approach_delta_ratio >= HAND_MOUTH_MIN_APPROACH_DELTA_RATIO
         and direction_cosine >= HAND_MOUTH_MIN_DIRECTION_COSINE
+    )
+    within_threshold = closest_distance_ratio <= HAND_MOUTH_MAX_DISTANCE_RATIO
+    proximity_override = within_threshold
+    if proximity_override or (
+        closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.40)
+        and trajectory_ready
     ):
         config.person_proxy_last_approach_ts = now_ts
 
     recent_approach = (
         now_ts - float(getattr(config, "person_proxy_last_approach_ts", 0.0))
     ) <= HAND_MOUTH_APPROACH_WINDOW_SECONDS
-    within_threshold = closest_distance_ratio <= HAND_MOUTH_MAX_DISTANCE_RATIO
 
     dwell_started_at = float(getattr(config, "person_proxy_dwell_started_at", 0.0))
-    if within_threshold:
-        if recent_approach and dwell_started_at <= 0.0:
+    threshold_for_reset = HAND_MOUTH_MAX_DISTANCE_RATIO * (1.12 if dwell_started_at > 0.0 else 1.0)
+    within_or_sticky = closest_distance_ratio <= threshold_for_reset
+    if within_or_sticky:
+        if dwell_started_at <= 0.0 and (recent_approach or proximity_override):
             config.person_proxy_dwell_started_at = now_ts
     else:
         config.person_proxy_dwell_started_at = 0.0
 
     dwell_started_at = float(getattr(config, "person_proxy_dwell_started_at", 0.0))
     dwell_elapsed = max(0.0, now_ts - dwell_started_at) if dwell_started_at > 0.0 else 0.0
-    triggered = within_threshold and dwell_started_at > 0.0 and dwell_elapsed >= HAND_MOUTH_MIN_DWELL_SECONDS
+    triggered = within_or_sticky and dwell_started_at > 0.0 and dwell_elapsed >= HAND_MOUTH_MIN_DWELL_SECONDS
     if triggered:
         config.person_proxy_active_until = now_ts + HAND_MOUTH_HOLD_SECONDS
     active_until = float(getattr(config, "person_proxy_active_until", 0.0))

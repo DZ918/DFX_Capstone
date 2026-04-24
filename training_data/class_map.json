@@ -3,5 +3,7 @@
   "bottle": 0,
   "cup": 4,
   "donut": 1,
-  "hot dog": 3
+  "hand_to_mouth": 6,
+  "hot dog": 3,
+  "pizza": 5
 }

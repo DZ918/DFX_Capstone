@@ -23,6 +23,7 @@ if cv2 is not None:
 
 from dfx.constants import (
     ALERT_DETECTION_CONFIDENCE_FLOOR,
+    ALERT_SNIPPET_CONFIDENCE_FLOOR,
     FOOD_CLASS_NAMES,
     FOOD_HAND_TO_MOUTH_EVENT_MIN_SCORE,
     HAND_TO_MOUTH_FOOD_VISIBILITY_FLOOR,
@@ -216,6 +217,80 @@ def _is_same_person_suppressed(config, alert_person_center, wall_now: float, fra
     return matched_alerts >= SAME_PERSON_MAX_ALERTS_IN_WINDOW
 
 
+def _clamp_bbox_xyxy(bounds, frame_width: int, frame_height: int) -> tuple[int, int, int, int]:
+    """Clamp one bbox to valid frame coordinates."""
+    x1, y1, x2, y2 = bounds
+    left = max(0, min(frame_width - 1, int(round(float(x1)))))
+    top = max(0, min(frame_height - 1, int(round(float(y1)))))
+    right = max(left + 1, min(frame_width, int(round(float(x2)))))
+    bottom = max(top + 1, min(frame_height, int(round(float(y2)))))
+    return left, top, right, bottom
+
+
+def _build_hand_to_mouth_alert_marker(config, frame, person_detections: list[dict], motion_score: float, motion_source: str):
+    """Build a fallback boxed detection so proxy-only motion alerts always attach a snippet image."""
+    frame_h, frame_w = frame.shape[:2]
+    if frame_w <= 1 or frame_h <= 1:
+        return None
+
+    marker_bbox = None
+    best_confidence = -1.0
+    for det in person_detections:
+        bbox = det.get("bbox_xyxy") if isinstance(det, dict) else None
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            confidence = float(det.get("confidence", 0.0))
+            x1, y1, x2, y2 = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        if confidence > best_confidence:
+            best_confidence = confidence
+            marker_bbox = (x1, y1, x2, y2)
+
+    mouth_xy = getattr(config, "person_proxy_last_mouth_xy", None)
+    finger_xy = getattr(config, "person_proxy_last_finger_xy", None)
+    if marker_bbox is None and mouth_xy is not None and finger_xy is not None:
+        min_x = min(float(mouth_xy[0]), float(finger_xy[0]))
+        min_y = min(float(mouth_xy[1]), float(finger_xy[1]))
+        max_x = max(float(mouth_xy[0]), float(finger_xy[0]))
+        max_y = max(float(mouth_xy[1]), float(finger_xy[1]))
+        span = max(max_x - min_x, max_y - min_y, 40.0)
+        pad = max(26.0, span * 0.80)
+        marker_bbox = (min_x - pad, min_y - pad, max_x + pad, max_y + pad)
+
+    if marker_bbox is None and (mouth_xy is not None or finger_xy is not None):
+        anchor = mouth_xy if mouth_xy is not None else finger_xy
+        anchor_x = float(anchor[0])
+        anchor_y = float(anchor[1])
+        pad = max(48.0, min(frame_w, frame_h) * 0.08)
+        marker_bbox = (anchor_x - pad, anchor_y - pad, anchor_x + pad, anchor_y + pad)
+
+    if marker_bbox is None:
+        box_w = max(80.0, float(frame_w) * 0.35)
+        box_h = max(80.0, float(frame_h) * 0.45)
+        center_x = float(frame_w) * 0.5
+        center_y = float(frame_h) * 0.45
+        marker_bbox = (
+            center_x - (box_w * 0.5),
+            center_y - (box_h * 0.5),
+            center_x + (box_w * 0.5),
+            center_y + (box_h * 0.5),
+        )
+
+    left, top, right, bottom = _clamp_bbox_xyxy(marker_bbox, frame_w, frame_h)
+    center_x = round((left + right) * 0.5, 2)
+    center_y = round((top + bottom) * 0.5, 2)
+    return {
+        "class_id": -1,
+        "class_name": "hand_to_mouth",
+        "confidence": round(max(ALERT_SNIPPET_CONFIDENCE_FLOOR + 0.05, float(motion_score)), 4),
+        "bbox_xyxy": [left, top, right, bottom],
+        "center_xy": [center_x, center_y],
+        "hand_to_mouth_source": str(motion_source or "person_proxy"),
+    }
+
+
 def _persist_alert_synchronously(config, payload: dict):
     """Compatibility path: persist one alert inline when no alert queue is configured."""
     alert = create_alert(
@@ -364,6 +439,7 @@ def camera_worker(config, cam_index: int):
             motion_score = last_motion_score
             motion_source = "none"
             inference_ran = False
+            hand_to_mouth_event_active = False
             all_detections = detections
             alert_detections: list[dict] = []
             visible_food_detections: list[dict] = []
@@ -458,8 +534,10 @@ def camera_worker(config, cam_index: int):
                             person_detections,
                             wall_now,
                         )
-                        if not motion_detected and not visible_food_detections and person_proxy_detected:
-                            # Allow alerting on pure hand-to-mouth gesture only when no food object is visible.
+                        if person_proxy_detected and (
+                            not motion_detected or float(person_proxy_score) >= float(motion_score)
+                        ):
+                            # Landmark proximity can confirm eating/drinking even when object-track motion is weak.
                             motion_detected = True
                             motion_score = max(float(motion_score), float(person_proxy_score))
                             motion_source = "person_proxy"
@@ -498,7 +576,6 @@ def camera_worker(config, cam_index: int):
                             )
                             or (
                                 motion_source in {"person_proxy", "food_occluded"}
-                                and not bool(visible_food_detections)
                                 and float(motion_score) >= PROXY_HAND_TO_MOUTH_EVENT_MIN_SCORE
                             )
                         )
@@ -546,11 +623,10 @@ def camera_worker(config, cam_index: int):
 
             motion_burst_trigger = (
                 inference_ran
-                and motion_detected
-                and (bool(visible_food_detections) or bool(person_detections) or motion_source == "person_proxy")
+                and hand_to_mouth_event_active
                 and len(config.motion_event_times) >= (
                     PROXY_HAND_TO_MOUTH_REQUIRED_EVENTS
-                    if motion_source == "person_proxy"
+                    if motion_source in {"person_proxy", "food_occluded"}
                     else HAND_TO_MOUTH_REQUIRED_EVENTS
                 )
             )
@@ -591,9 +667,9 @@ def camera_worker(config, cam_index: int):
                 frame_diag,
             )
 
-            should_alert = (
+            should_alert = bool(motion_burst_trigger) or (
                 not same_person_suppressed
-                and (motion_burst_trigger or stationary_followup_trigger or initial_trigger or new_object_trigger)
+                and (stationary_followup_trigger or initial_trigger or new_object_trigger)
             )
             if should_alert:
                 reason = "initial"
@@ -603,12 +679,35 @@ def camera_worker(config, cam_index: int):
                     reason = "new_object"
                 elif stationary_followup_trigger:
                     reason = "stationary_followup"
+
+                payload_detections = deepcopy(alert_detections)
+                if hand_to_mouth_event_active:
+                    has_snippet_candidate = any(
+                        float(det.get("confidence", 0.0)) >= ALERT_SNIPPET_CONFIDENCE_FLOOR
+                        for det in payload_detections
+                        if isinstance(det, dict)
+                    )
+                    if not has_snippet_candidate:
+                        marker = _build_hand_to_mouth_alert_marker(
+                            config,
+                            frame,
+                            person_detections,
+                            motion_score,
+                            motion_source,
+                        )
+                        if marker is not None:
+                            payload_detections.append(marker)
+
+                recent_frames_snapshot = list(recent_frames)
+                if motion_burst_trigger and len(recent_frames_snapshot) < 3:
+                    recent_frames_snapshot.extend([frame.copy() for _ in range(3 - len(recent_frames_snapshot))])
+
                 alert_payload = {
                     "frame": frame.copy(),
-                    "detections": deepcopy(alert_detections),
+                    "detections": payload_detections,
                     "snippet_dir": config.snippet_dir,
                     "video_dir": config.video_dir,
-                    "recent_frames": list(recent_frames),
+                    "recent_frames": recent_frames_snapshot,
                     "video_fps": stream_fps,
                     "camera_zone": camera_zone,
                     "context_detections": deepcopy(all_detections),
@@ -616,7 +715,7 @@ def camera_worker(config, cam_index: int):
                     "motion_score": motion_score,
                     "hand_to_mouth_source": motion_source,
                     "hand_to_mouth_event_count": len(config.motion_event_times),
-                    "attach_video": bool(motion_burst_trigger),
+                    "attach_video": bool(motion_burst_trigger or hand_to_mouth_event_active),
                     "alert_reason": reason,
                 }
                 if not _enqueue_alert_job(config, alert_payload):
@@ -648,9 +747,6 @@ def camera_worker(config, cam_index: int):
                     else:
                         config.stationary_first_alert_ts = wall_now
                         config.stationary_followup_sent = False
-            elif same_person_suppressed and motion_burst_trigger:
-                # Prevent burst-alert loops for one person while still allowing future events.
-                config.motion_event_times.clear()
 
             annotated = draw_detections(frame, detections) if detection_enabled else frame.copy()
             if detection_enabled and motion_detected:

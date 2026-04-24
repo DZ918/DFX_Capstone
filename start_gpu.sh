@@ -60,7 +60,7 @@ case "$MODE" in
 				--conf "$DASHBOARD_CONFIDENCE" \
 				--inference-imgsz 320 \
 				--max-inference-fps 4 \
-				--fps 6 \
+					--fps 30 \
 				--jpeg-quality 65 \
 					"$MOTION_FLAG" \
 				"$@" \

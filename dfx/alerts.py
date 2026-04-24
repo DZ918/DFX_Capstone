@@ -13,6 +13,11 @@ try:
 except Exception:
     cv2 = None
 
+try:
+    from PIL import Image
+except Exception:
+    Image = None
+
 from dfx.constants import (
     ALERT_DETECTION_CONFIDENCE_FLOOR,
     ALERT_SNIPPET_CONFIDENCE_FLOOR,
@@ -472,11 +477,72 @@ def add_alert_video(
             capture.release()
         return bool(ok and first_frame is not None and frame_count >= max(2, min_written_frames // 2))
 
-    # Ubuntu browsers often cannot play MPEG-4 Part 2 (mp4v) streams even in .mp4 files.
-    # Prefer H264/WebM on Linux; if unavailable, skip attachment instead of creating an
-    # unplayable 0:00 clip.
+    def _write_alert_gif() -> tuple[str, str] | None:
+        """Fallback for environments where browser-friendly video codecs are unavailable."""
+        if Image is None:
+            return None
+        valid_frames = [
+            frame
+            for frame in recent_frames
+            if frame is not None and hasattr(frame, "shape") and len(frame.shape) >= 2
+        ]
+        if len(valid_frames) < 2:
+            return None
+        max_frames = 28
+        sample_step = max(1, len(valid_frames) // max_frames)
+        sampled_frames = valid_frames[::sample_step]
+        if len(sampled_frames) < 2:
+            sampled_frames = [valid_frames[0], valid_frames[-1]]
+
+        pil_frames = []
+        for frame in sampled_frames:
+            frame_h, frame_w = int(frame.shape[0]), int(frame.shape[1])
+            if frame_h <= 0 or frame_w <= 0:
+                continue
+            target_width = min(480, frame_w)
+            if frame_w != target_width:
+                target_height = max(1, int(round(frame_h * (target_width / float(frame_w)))))
+                frame = cv2.resize(frame, (target_width, target_height))
+            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            pil_frames.append(Image.fromarray(rgb))
+        if len(pil_frames) < 2:
+            return None
+
+        output_name = f"{alert_id}.gif"
+        output_path = os.path.join(video_dir, output_name)
+        frame_interval_ms = int(round(1000.0 / max(3.0, min(15.0, safe_fps))))
+        duration_ms = max(55, min(500, frame_interval_ms * sample_step))
+        try:
+            pil_frames[0].save(
+                output_path,
+                save_all=True,
+                append_images=pil_frames[1:],
+                duration=duration_ms,
+                loop=0,
+                optimize=False,
+                disposal=2,
+            )
+        except Exception:
+            return None
+        if os.path.exists(output_path) and os.path.getsize(output_path) >= 256:
+            return output_name, "image/gif"
+        try:
+            os.remove(output_path)
+        except OSError:
+            pass
+        return None
+
+    if platform.system() == "Linux":
+        # Jetson/OpenCV builds frequently emit MP4 files that decode in OpenCV but fail in browsers.
+        # Prefer an animated GIF attachment so the dashboard always renders the recording inline.
+        gif_result = _write_alert_gif()
+        if gif_result is not None:
+            return gif_result
+
+    # Prefer the most reliably available codec first on Linux/Jetson to reduce encoder-probe noise.
     if platform.system() == "Linux":
         codec_candidates = [
+            ("mp4v", "mp4", "video/mp4"),
             ("avc1", "mp4", "video/mp4"),
             ("H264", "mp4", "video/mp4"),
             ("X264", "mp4", "video/mp4"),
@@ -522,11 +588,23 @@ def add_alert_video(
                 pass
             continue
         if _is_usable_alert_video(output_path, min_written_frames=written_frames):
+            if platform.system() == "Linux" and codec == "mp4v":
+                # MPEG-4 Part 2 often decodes in OpenCV but not in browser <video>.
+                gif_result = _write_alert_gif()
+                if gif_result is not None:
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        pass
+                    return gif_result
             return output_name, mime
         try:
             os.remove(output_path)
         except OSError:
             pass
+    gif_result = _write_alert_gif()
+    if gif_result is not None:
+        return gif_result
     return None
 
 

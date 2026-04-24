@@ -548,6 +548,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             content_type = "video/x-msvideo"
         elif lower.endswith(".webm"):
             content_type = "video/webm"
+        elif lower.endswith(".gif"):
+            content_type = "image/gif"
+        elif lower.endswith(".webp"):
+            content_type = "image/webp"
         file_size = os.path.getsize(video_path)
         range_header = self.headers.get("Range", "").strip()
         if not range_header.startswith("bytes="):

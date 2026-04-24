@@ -140,6 +140,27 @@ def _cleanup_after_training(config) -> None:
         pass
 
 
+def _clear_accepted_alerts_from_dashboard(config) -> int:
+    """Remove accepted alerts after a successful training cycle."""
+    with config.alert_lock:
+        alerts = read_alerts(config.alert_log)
+        if not alerts:
+            return 0
+        filtered_alerts: list[dict] = []
+        removed_count = 0
+        for alert in alerts:
+            if not isinstance(alert, dict):
+                filtered_alerts.append(alert)
+                continue
+            if str(alert.get("status", "")).strip().lower() == "accepted":
+                removed_count += 1
+                continue
+            filtered_alerts.append(alert)
+        if removed_count > 0:
+            write_alerts(config.alert_log, filtered_alerts)
+    return removed_count
+
+
 def _recommended_training_overrides(device: str) -> dict:
     """Use conservative training defaults on Jetson-class hardware."""
     overrides = {
@@ -591,6 +612,12 @@ def _train_on_accepted_samples(config) -> None:
 
         # Clean up exported snippets, videos, and stale run artifacts
         _cleanup_after_training(config)
+        cleared_alerts = _clear_accepted_alerts_from_dashboard(config)
+        with config.training_lock:
+            if cleared_alerts > 0:
+                config.training_last_message = (
+                    f"Training completed; cleared {cleared_alerts} accepted alerts"
+                )
             
     except Exception as exc:
         with config.training_lock:
