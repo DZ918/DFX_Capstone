@@ -236,9 +236,17 @@ class DashboardConfig:
         self.last_food_seen_ts = 0.0
         self.occlusion_motion_until = 0.0
         self.person_proxy_prev_gray = None
+        self.person_proxy_landmark_detector = None
+        self.person_proxy_landmark_detector_unavailable = False
         self.person_proxy_active_until = 0.0
         self.person_proxy_score_history: deque[float] = deque(maxlen=6)
         self.person_proxy_trigger_streak = 0
+        self.person_proxy_dwell_started_at = 0.0
+        self.person_proxy_last_seen_ts = 0.0
+        self.person_proxy_last_approach_ts = 0.0
+        self.person_proxy_last_distance_ratio = float("inf")
+        self.person_proxy_last_finger_xy = None
+        self.person_proxy_last_mouth_xy = None
         self.food_motion_confirm_streak = 0
         self.person_alert_history: deque[tuple[float, float, float]] = deque(maxlen=300)
         self.alert_object_history: deque[tuple[str, float, float, float, float]] = deque(maxlen=500)

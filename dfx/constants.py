@@ -2,6 +2,47 @@
 
 import os
 
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+_TRAINED_DASHBOARD_MODEL_PATH = os.path.join(
+    _PROJECT_ROOT,
+    "training_data",
+    "runs",
+    "accepted",
+    "weights",
+    "best.pt",
+)
+_BASE_DASHBOARD_MODEL_PATH = os.path.join(_PROJECT_ROOT, "yolov8n.pt")
+
+
+def _default_dashboard_model_path() -> str:
+    configured = os.environ.get("DFX_DASHBOARD_MODEL_PATH", "").strip()
+    if configured:
+        return configured
+    if os.path.exists(_TRAINED_DASHBOARD_MODEL_PATH):
+        return _TRAINED_DASHBOARD_MODEL_PATH
+    return _BASE_DASHBOARD_MODEL_PATH if os.path.exists(_BASE_DASHBOARD_MODEL_PATH) else "yolov8n.pt"
+
+
+DEFAULT_DASHBOARD_MODEL_PATH = _default_dashboard_model_path()
+DEFAULT_DASHBOARD_CONFIDENCE = float(os.environ.get("DFX_DASHBOARD_CONFIDENCE", "0.35"))
+
+SNACK_CLASS_NAMES = {
+    "snack",
+    "snacks",
+    "lays",
+    "doritos",
+    "candy",
+    "candies",
+    "candy wrapper",
+    "candy wrappers",
+    "candy_wrapper",
+    "candy_wrappers",
+    "vending machine food",
+    "vending_machine_food",
+    "drink",
+    "drinks",
+}
+
 FOOD_CLASS_NAMES = {
     "apple",
     "banana",
@@ -16,7 +57,7 @@ FOOD_CLASS_NAMES = {
     "bottle",
     "cup",
     "bowl",
-}
+} | SNACK_CLASS_NAMES
 
 INFERENCE_CLASS_NAMES = set(FOOD_CLASS_NAMES) | {"person"}
 
@@ -29,11 +70,21 @@ CONSUMPTION_CLASS_NAMES = {
     "donut",
     "cake",
     "sandwich",
+    "snack",
+    "snacks",
+    "lays",
+    "doritos",
+    "candy",
+    "candies",
+    "vending machine food",
+    "vending_machine_food",
+    "drink",
+    "drinks",
     "bottle",
     "cup",
 }
 
-DRINK_CONTAINER_CLASS_NAMES = {"bottle", "cup"}
+DRINK_CONTAINER_CLASS_NAMES = {"bottle", "cup", "drink", "drinks"}
 HANDHELD_FOOD_CLASS_NAMES = {
     "apple",
     "banana",
@@ -43,6 +94,14 @@ HANDHELD_FOOD_CLASS_NAMES = {
     "donut",
     "cake",
     "sandwich",
+    "snack",
+    "snacks",
+    "lays",
+    "doritos",
+    "candy",
+    "candies",
+    "vending machine food",
+    "vending_machine_food",
 }
 
 # Motion scoring thresholds.
@@ -54,22 +113,27 @@ PROXY_HAND_TO_MOUTH_EVENT_MIN_SCORE = 1.2
 STATIONARY_FOLLOWUP_SECONDS = 30 * 60
 HAND_TO_MOUTH_WINDOW_SECONDS = 30.0
 HAND_TO_MOUTH_REQUIRED_EVENTS = 3
+PROXY_HAND_TO_MOUTH_REQUIRED_EVENTS = 1
 FOOD_OCCLUSION_LOOKBACK_SECONDS = 2.0
 OCCLUDED_MOTION_HOLD_SECONDS = 1.2
 OCCLUDED_MOTION_PROXY_SCORE = 0.86
+HAND_TO_MOUTH_FOOD_VISIBILITY_FLOOR = 0.45
 
-# Person-proxy hand-to-mouth detection parameters.
-PERSON_PROXY_MIN_AREA_RATIO = 0.02
-PERSON_PROXY_DIFF_THRESHOLD = 24
-PERSON_PROXY_MOUTH_MOTION_RATIO = 0.05
-PERSON_PROXY_MIN_MOUTH_RATIO = 0.04
-PERSON_PROXY_HOLD_SECONDS = 0.8
-PERSON_PROXY_SCORE_FLOOR = 0.86
-PERSON_PROXY_APPROACH_MOTION_RATIO = 0.035
-PERSON_PROXY_MIN_APPROACH_RATIO = 0.028
-PERSON_PROXY_TRIGGER_SCORE = 1.1
-PERSON_PROXY_CONFIRM_FRAMES = 3
-PERSON_PROXY_MIN_CONFIDENCE = 0.25
+# Landmark-based hand-to-mouth detection parameters.
+HAND_MOUTH_MIN_PERSON_CONFIDENCE = 0.25
+HAND_MOUTH_MIN_PERSON_AREA_RATIO = 0.02
+HAND_MOUTH_PERSON_CROP_MARGIN_RATIO = 0.18
+HAND_MOUTH_LANDMARK_MIN_DETECTION_CONFIDENCE = 0.55
+HAND_MOUTH_LANDMARK_MIN_TRACKING_CONFIDENCE = 0.55
+HAND_MOUTH_MIN_FACE_WIDTH_PX = 36.0
+HAND_MOUTH_MAX_DISTANCE_RATIO = 0.16
+HAND_MOUTH_MIN_DWELL_SECONDS = 0.65
+HAND_MOUTH_MAX_TRACK_GAP_SECONDS = 0.18
+HAND_MOUTH_APPROACH_WINDOW_SECONDS = 0.45
+HAND_MOUTH_MIN_APPROACH_DELTA_RATIO = 0.018
+HAND_MOUTH_MIN_DIRECTION_COSINE = 0.35
+HAND_MOUTH_HOLD_SECONDS = 0.45
+HAND_MOUTH_SCORE_FLOOR = 1.28
 
 # Alert confidence floors.
 ALERT_DETECTION_CONFIDENCE_FLOOR = 0.62

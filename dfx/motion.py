@@ -1,6 +1,10 @@
 """Heuristic motion scoring for eating/drinking detection."""
 
+import contextlib
+import logging
 import math
+import os
+import sys
 import time
 from collections import deque
 
@@ -14,23 +18,42 @@ try:
 except Exception:
     np = None
 
+os.environ.setdefault("GLOG_minloglevel", "2")
+os.environ.setdefault("ABSL_MIN_LOG_LEVEL", "2")
+os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "3")
+
+try:
+    import mediapipe as mp
+except Exception:
+    mp = None
+
 from dfx.constants import (
     CONSUMPTION_CLASS_NAMES,
     DRINK_CONTAINER_CLASS_NAMES,
+    HAND_MOUTH_APPROACH_WINDOW_SECONDS,
+    HAND_MOUTH_HOLD_SECONDS,
+    HAND_MOUTH_LANDMARK_MIN_DETECTION_CONFIDENCE,
+    HAND_MOUTH_LANDMARK_MIN_TRACKING_CONFIDENCE,
+    HAND_MOUTH_MAX_DISTANCE_RATIO,
+    HAND_MOUTH_MAX_TRACK_GAP_SECONDS,
+    HAND_MOUTH_MIN_DIRECTION_COSINE,
+    HAND_MOUTH_MIN_APPROACH_DELTA_RATIO,
+    HAND_MOUTH_MIN_DWELL_SECONDS,
+    HAND_MOUTH_MIN_FACE_WIDTH_PX,
+    HAND_MOUTH_MIN_PERSON_AREA_RATIO,
+    HAND_MOUTH_MIN_PERSON_CONFIDENCE,
+    HAND_MOUTH_PERSON_CROP_MARGIN_RATIO,
+    HAND_MOUTH_SCORE_FLOOR,
     HANDHELD_FOOD_CLASS_NAMES,
     MOTION_TRIGGER_SCORE,
-    PERSON_PROXY_CONFIRM_FRAMES,
-    PERSON_PROXY_DIFF_THRESHOLD,
-    PERSON_PROXY_HOLD_SECONDS,
-    PERSON_PROXY_MIN_APPROACH_RATIO,
-    PERSON_PROXY_MIN_AREA_RATIO,
-    PERSON_PROXY_MIN_CONFIDENCE,
-    PERSON_PROXY_MIN_MOUTH_RATIO,
-    PERSON_PROXY_APPROACH_MOTION_RATIO,
-    PERSON_PROXY_MOUTH_MOTION_RATIO,
-    PERSON_PROXY_SCORE_FLOOR,
-    PERSON_PROXY_TRIGGER_SCORE,
 )
+
+logger = logging.getLogger(__name__)
+
+_FACE_LIP_CENTER_INDICES = (13, 14, 78, 308)
+_FACE_LIP_CORNER_INDICES = (61, 291)
+_FACE_WIDTH_INDICES = (234, 454)
+_INDEX_FINGER_TIP_INDEX = 8
 
 
 def _extract_detection_geometry(det: dict) -> tuple[float, float, float] | None:
@@ -91,6 +114,265 @@ def _extract_person_anchor(det: dict) -> tuple[float, float, float, float, float
     mouth_y = y1 + (height * 0.28)
     radius = max(30.0, min(width, height) * 0.22)
     return center_x, mouth_y, radius, x1, y1, x2, y2
+
+
+def reset_person_hand_to_mouth_state(config):
+    """Reset the landmark-based hand-to-mouth state for one camera worker."""
+    config.person_proxy_prev_gray = None
+    config.person_proxy_active_until = 0.0
+    config.person_proxy_trigger_streak = 0
+    config.person_proxy_dwell_started_at = 0.0
+    config.person_proxy_last_seen_ts = 0.0
+    config.person_proxy_last_approach_ts = 0.0
+    config.person_proxy_last_distance_ratio = float("inf")
+    config.person_proxy_last_finger_xy = None
+    config.person_proxy_last_mouth_xy = None
+
+
+def _get_hand_mouth_detector(config):
+    """Lazily create the MediaPipe holistic detector used for strict landmark checks."""
+    detector = getattr(config, "person_proxy_landmark_detector", None)
+    if detector is not None:
+        return detector
+    if bool(getattr(config, "person_proxy_landmark_detector_unavailable", False)):
+        return None
+    if mp is None:
+        logger.warning("mediapipe unavailable; strict hand-to-mouth landmark detection disabled")
+        config.person_proxy_landmark_detector_unavailable = True
+        return None
+    try:
+        with _suppress_native_stderr():
+            detector = mp.solutions.holistic.Holistic(
+                static_image_mode=False,
+                model_complexity=1,
+                smooth_landmarks=True,
+                min_detection_confidence=HAND_MOUTH_LANDMARK_MIN_DETECTION_CONFIDENCE,
+                min_tracking_confidence=HAND_MOUTH_LANDMARK_MIN_TRACKING_CONFIDENCE,
+            )
+    except Exception as exc:
+        logger.warning("could not initialize mediapipe holistic detector: %s", exc)
+        config.person_proxy_landmark_detector_unavailable = True
+        return None
+    config.person_proxy_landmark_detector = detector
+    config.person_proxy_detector_quiet_frames = 4
+    return detector
+
+
+@contextlib.contextmanager
+def _suppress_native_stderr():
+    """Silence one-time MediaPipe/TFLite constructor noise written directly to stderr."""
+    if os.name != "posix":
+        yield
+        return
+
+    saved_fd = None
+    devnull = None
+    try:
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+        saved_fd = os.dup(2)
+        devnull = open(os.devnull, "w", encoding="utf-8")
+        os.dup2(devnull.fileno(), 2)
+        yield
+    finally:
+        try:
+            sys.stderr.flush()
+        except Exception:
+            pass
+        if saved_fd is not None:
+            os.dup2(saved_fd, 2)
+            os.close(saved_fd)
+        if devnull is not None:
+            devnull.close()
+
+
+def _current_hand_mouth_output(config, now_ts: float) -> tuple[bool, float]:
+    """Return the currently active strict hand-to-mouth state and score."""
+    active_until = float(getattr(config, "person_proxy_active_until", 0.0))
+    active = active_until > 0.0 and now_ts <= active_until
+    return active, (round(HAND_MOUTH_SCORE_FLOOR, 3) if active else 0.0)
+
+
+def _reset_hand_mouth_candidate(config):
+    """Clear in-progress landmark proximity state without clearing an active hold."""
+    config.person_proxy_dwell_started_at = 0.0
+    config.person_proxy_last_seen_ts = 0.0
+    config.person_proxy_last_approach_ts = 0.0
+    config.person_proxy_last_distance_ratio = float("inf")
+    config.person_proxy_last_finger_xy = None
+    config.person_proxy_last_mouth_xy = None
+
+
+def _handle_hand_mouth_gap(config, now_ts: float) -> tuple[bool, float]:
+    """Gracefully expire proximity state after landmark loss or missing detections."""
+    last_seen_ts = float(getattr(config, "person_proxy_last_seen_ts", 0.0))
+    if last_seen_ts <= 0.0 or (now_ts - last_seen_ts) > HAND_MOUTH_MAX_TRACK_GAP_SECONDS:
+        _reset_hand_mouth_candidate(config)
+    return _current_hand_mouth_output(config, now_ts)
+
+
+def _safe_landmark_xy(
+    landmarks,
+    index: int,
+    offset_x: int,
+    offset_y: int,
+    width: int,
+    height: int,
+    pad_x: int = 0,
+    pad_y: int = 0,
+):
+    """Project one MediaPipe landmark index into full-frame pixel coordinates."""
+    if landmarks is None:
+        return None
+    points = getattr(landmarks, "landmark", None)
+    if points is None or index >= len(points):
+        return None
+    point = points[index]
+    raw_x = (float(point.x) * float(width)) - float(pad_x)
+    raw_y = (float(point.y) * float(height)) - float(pad_y)
+    return (
+        float(offset_x) + raw_x,
+        float(offset_y) + raw_y,
+    )
+
+
+def _mean_landmark_xy(
+    landmarks,
+    indices: tuple[int, ...],
+    offset_x: int,
+    offset_y: int,
+    width: int,
+    height: int,
+    pad_x: int = 0,
+    pad_y: int = 0,
+):
+    """Project multiple landmarks and return their mean pixel location."""
+    coords = [
+        _safe_landmark_xy(landmarks, index, offset_x, offset_y, width, height, pad_x, pad_y)
+        for index in indices
+    ]
+    coords = [coord for coord in coords if coord is not None]
+    if not coords:
+        return None
+    return (
+        sum(coord[0] for coord in coords) / float(len(coords)),
+        sum(coord[1] for coord in coords) / float(len(coords)),
+    )
+
+
+def _distance(point_a, point_b) -> float:
+    """Return Euclidean distance between two 2D points."""
+    return math.hypot(float(point_a[0]) - float(point_b[0]), float(point_a[1]) - float(point_b[1]))
+
+
+def _direction_cosine(motion_vector: tuple[float, float], target_vector: tuple[float, float]) -> float:
+    """Return cosine similarity between movement and mouth-target vectors."""
+    motion_norm = math.hypot(motion_vector[0], motion_vector[1])
+    target_norm = math.hypot(target_vector[0], target_vector[1])
+    if motion_norm <= 1e-6 or target_norm <= 1e-6:
+        return 0.0
+    return (
+        (motion_vector[0] * target_vector[0]) + (motion_vector[1] * target_vector[1])
+    ) / (motion_norm * target_norm)
+
+
+def _select_person_crop(person_detections: list[dict], frame_width: int, frame_height: int):
+    """Pick the strongest person ROI so landmark inference focuses on one subject."""
+    best_bbox = None
+    best_score = 0.0
+    frame_area = max(1.0, float(frame_width * frame_height))
+    for det in person_detections:
+        try:
+            confidence = float(det.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        if confidence < HAND_MOUTH_MIN_PERSON_CONFIDENCE:
+            continue
+        bbox = det.get("bbox_xyxy")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            continue
+        try:
+            x1, y1, x2, y2 = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        width = max(1.0, x2 - x1)
+        height = max(1.0, y2 - y1)
+        if (width * height) / frame_area < HAND_MOUTH_MIN_PERSON_AREA_RATIO:
+            continue
+        score = (width * height) * max(0.1, confidence)
+        if score > best_score:
+            best_score = score
+            best_bbox = (x1, y1, x2, y2)
+    if best_bbox is None:
+        return None
+    x1, y1, x2, y2 = best_bbox
+    margin_x = (x2 - x1) * HAND_MOUTH_PERSON_CROP_MARGIN_RATIO
+    margin_y = (y2 - y1) * HAND_MOUTH_PERSON_CROP_MARGIN_RATIO
+    left = max(0, int(round(x1 - margin_x)))
+    top = max(0, int(round(y1 - margin_y)))
+    right = min(frame_width, int(round(x2 + margin_x)))
+    bottom = min(frame_height, int(round(y2 + margin_y)))
+    if right <= left or bottom <= top:
+        return None
+    return left, top, right, bottom
+
+
+def _select_hand_mouth_crop(person_detections: list[dict], frame_width: int, frame_height: int):
+    """Use the strongest person crop when available, otherwise fall back to the full frame."""
+    person_crop = _select_person_crop(person_detections, frame_width, frame_height)
+    if person_crop is not None:
+        return person_crop
+    if frame_width <= 0 or frame_height <= 0:
+        return None
+    return 0, 0, int(frame_width), int(frame_height)
+
+
+def _prepare_hand_mouth_input(frame, crop_bounds: tuple[int, int, int, int]):
+    """Square-pad the selected crop before MediaPipe so its ROI math stays stable."""
+    crop_left, crop_top, crop_right, crop_bottom = crop_bounds
+    crop = frame[crop_top:crop_bottom, crop_left:crop_right]
+    if crop.size == 0:
+        return None
+    crop_h, crop_w = crop.shape[:2]
+    input_frame = crop
+    pad_x = 0
+    pad_y = 0
+    if crop_w != crop_h:
+        side = max(crop_w, crop_h)
+        input_frame = np.zeros((side, side, 3), dtype=crop.dtype)
+        pad_x = (side - crop_w) // 2
+        pad_y = (side - crop_h) // 2
+        input_frame[pad_y:pad_y + crop_h, pad_x:pad_x + crop_w] = crop
+    return {
+        "frame": input_frame,
+        "crop_left": crop_left,
+        "crop_top": crop_top,
+        "pad_x": pad_x,
+        "pad_y": pad_y,
+    }
+
+
+def _hand_mouth_score(distance_ratio: float, dwell_elapsed: float, approach_delta_ratio: float, direction_cosine: float, active: bool) -> float:
+    """Convert strict landmark geometry into a bounded score used by the alert pipeline."""
+    proximity_score = max(0.0, 1.0 - (distance_ratio / max(1e-6, HAND_MOUTH_MAX_DISTANCE_RATIO)))
+    dwell_score = min(1.0, dwell_elapsed / max(1e-6, HAND_MOUTH_MIN_DWELL_SECONDS))
+    approach_score = min(1.0, approach_delta_ratio / max(1e-6, HAND_MOUTH_MIN_APPROACH_DELTA_RATIO))
+    direction_score = min(
+        1.0,
+        max(0.0, (direction_cosine - HAND_MOUTH_MIN_DIRECTION_COSINE) / max(1e-6, 1.0 - HAND_MOUTH_MIN_DIRECTION_COSINE)),
+    )
+    raw_score = (
+        0.50 * proximity_score
+        + 0.28 * dwell_score
+        + 0.14 * approach_score
+        + 0.08 * direction_score
+    )
+    score = min(1.5, max(0.0, raw_score * 1.5))
+    if active:
+        score = max(score, HAND_MOUTH_SCORE_FLOOR)
+    return round(score, 3)
 
 
 def _score_person_proximity(
@@ -326,115 +608,185 @@ def detect_person_hand_to_mouth_proxy(
     person_detections: list[dict],
     now_ts: float,
 ) -> tuple[bool, float]:
-    """Fallback hand-to-mouth motion signal from person-only upper-face ROI movement."""
+    """Strict hand-to-mouth signal from index-finger and lip landmark proximity."""
     if cv2 is None or np is None:
         return False, 0.0
-    if not person_detections:
-        history = getattr(config, "person_proxy_score_history", None)
-        if history is not None:
-            history.append(0.0)
-        config.person_proxy_trigger_streak = 0
-        return (now_ts <= float(getattr(config, "person_proxy_active_until", 0.0))), 0.0
 
-    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-    frame_h, frame_w = gray.shape[:2]
-    frame_area = max(1.0, float(frame_h * frame_w))
-    downsample = 0.5
-    small = cv2.resize(
-        gray,
-        (max(1, int(frame_w * downsample)), max(1, int(frame_h * downsample))),
-        interpolation=cv2.INTER_AREA,
-    )
-    prev_small = getattr(config, "person_proxy_prev_gray", None)
-    config.person_proxy_prev_gray = small
-    if prev_small is None or getattr(prev_small, "shape", None) != small.shape:
-        config.person_proxy_trigger_streak = 0
-        return (now_ts <= float(getattr(config, "person_proxy_active_until", 0.0))), 0.0
+    detector = _get_hand_mouth_detector(config)
+    if detector is None:
+        return _current_hand_mouth_output(config, now_ts)
 
-    diff = cv2.absdiff(small, prev_small)
-    _, motion_mask = cv2.threshold(diff, PERSON_PROXY_DIFF_THRESHOLD, 255, cv2.THRESH_BINARY)
+    frame_h, frame_w = frame.shape[:2]
+    person_crop = _select_hand_mouth_crop(person_detections, frame_w, frame_h)
+    if person_crop is None:
+        return _handle_hand_mouth_gap(config, now_ts)
+    prepared_input = _prepare_hand_mouth_input(frame, person_crop)
+    if prepared_input is None:
+        return _handle_hand_mouth_gap(config, now_ts)
 
-    best_mouth_ratio = 0.0
-    best_approach_ratio = 0.0
-    best_raw_score = 0.0
-    scale_x = float(small.shape[1]) / max(1.0, float(frame_w))
-    scale_y = float(small.shape[0]) / max(1.0, float(frame_h))
-    for det in person_detections:
-        try:
-            person_confidence = float(det.get("confidence", 0.0))
-        except (TypeError, ValueError):
-            person_confidence = 0.0
-        if person_confidence < PERSON_PROXY_MIN_CONFIDENCE:
-            continue
-        bbox = det.get("bbox_xyxy")
-        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-            continue
-        try:
-            x1, y1, x2, y2 = (float(v) for v in bbox)
-        except (TypeError, ValueError):
-            continue
-        person_w = max(1.0, x2 - x1)
-        person_h = max(1.0, y2 - y1)
-        if (person_w * person_h) / frame_area < PERSON_PROXY_MIN_AREA_RATIO:
-            continue
-
-        # Focus on mouth/hand interaction area in upper-middle of the person box.
-        roi_x1 = x1 + (person_w * 0.24)
-        roi_x2 = x1 + (person_w * 0.76)
-        roi_y1 = y1 + (person_h * 0.08)
-        roi_y2 = y1 + (person_h * 0.48)
-
-        sx1 = max(0, min(motion_mask.shape[1] - 1, int(roi_x1 * scale_x)))
-        sy1 = max(0, min(motion_mask.shape[0] - 1, int(roi_y1 * scale_y)))
-        sx2 = max(sx1 + 1, min(motion_mask.shape[1], int(roi_x2 * scale_x)))
-        sy2 = max(sy1 + 1, min(motion_mask.shape[0], int(roi_y2 * scale_y)))
-        roi = motion_mask[sy1:sy2, sx1:sx2]
-        if roi.size == 0:
-            continue
-        mouth_ratio = float(cv2.countNonZero(roi)) / float(roi.size)
-
-        approach_x1 = x1 + (person_w * 0.18)
-        approach_x2 = x1 + (person_w * 0.82)
-        approach_y1 = y1 + (person_h * 0.22)
-        approach_y2 = y1 + (person_h * 0.78)
-        ax1 = max(0, min(motion_mask.shape[1] - 1, int(approach_x1 * scale_x)))
-        ay1 = max(0, min(motion_mask.shape[0] - 1, int(approach_y1 * scale_y)))
-        ax2 = max(ax1 + 1, min(motion_mask.shape[1], int(approach_x2 * scale_x)))
-        ay2 = max(ay1 + 1, min(motion_mask.shape[0], int(approach_y2 * scale_y)))
-        approach_roi = motion_mask[ay1:ay2, ax1:ax2]
-        approach_ratio = 0.0
-        if approach_roi.size > 0:
-            approach_ratio = float(cv2.countNonZero(approach_roi)) / float(approach_roi.size)
-
-        mouth_score = mouth_ratio / max(1e-6, PERSON_PROXY_MOUTH_MOTION_RATIO)
-        approach_score = approach_ratio / max(1e-6, PERSON_PROXY_APPROACH_MOTION_RATIO)
-        raw_score = (0.72 * mouth_score) + (0.28 * approach_score)
-        if raw_score > best_raw_score:
-            best_raw_score = raw_score
-            best_mouth_ratio = mouth_ratio
-            best_approach_ratio = approach_ratio
-
-    score_history = getattr(config, "person_proxy_score_history", None)
-    if score_history is not None:
-        score_history.append(best_raw_score)
-        smoothed_score = sum(score_history) / max(1, len(score_history))
+    crop_left = int(prepared_input["crop_left"])
+    crop_top = int(prepared_input["crop_top"])
+    pad_x = int(prepared_input["pad_x"])
+    pad_y = int(prepared_input["pad_y"])
+    input_frame = prepared_input["frame"]
+    input_h, input_w = input_frame.shape[:2]
+    rgb = cv2.cvtColor(input_frame, cv2.COLOR_BGR2RGB)
+    rgb.flags.writeable = False
+    quiet_frames = int(getattr(config, "person_proxy_detector_quiet_frames", 0))
+    if quiet_frames > 0:
+        with _suppress_native_stderr():
+            results = detector.process(rgb)
+        config.person_proxy_detector_quiet_frames = quiet_frames - 1
     else:
-        smoothed_score = best_raw_score
+        results = detector.process(rgb)
+    face_landmarks = getattr(results, "face_landmarks", None)
+    hand_landmarks = [
+        getattr(results, "left_hand_landmarks", None),
+        getattr(results, "right_hand_landmarks", None),
+    ]
+    hand_landmarks = [landmarks for landmarks in hand_landmarks if landmarks is not None]
+    if face_landmarks is None or not hand_landmarks:
+        return _handle_hand_mouth_gap(config, now_ts)
 
-    candidate_trigger = (
-        smoothed_score >= PERSON_PROXY_TRIGGER_SCORE
-        and best_mouth_ratio >= PERSON_PROXY_MIN_MOUTH_RATIO
-        and best_approach_ratio >= PERSON_PROXY_MIN_APPROACH_RATIO
+    mouth_center = _mean_landmark_xy(
+        face_landmarks,
+        _FACE_LIP_CENTER_INDICES,
+        crop_left,
+        crop_top,
+        input_w,
+        input_h,
+        pad_x,
+        pad_y,
     )
-    if candidate_trigger:
-        config.person_proxy_trigger_streak = int(getattr(config, "person_proxy_trigger_streak", 0)) + 1
+    mouth_left = _safe_landmark_xy(
+        face_landmarks,
+        _FACE_LIP_CORNER_INDICES[0],
+        crop_left,
+        crop_top,
+        input_w,
+        input_h,
+        pad_x,
+        pad_y,
+    )
+    mouth_right = _safe_landmark_xy(
+        face_landmarks,
+        _FACE_LIP_CORNER_INDICES[1],
+        crop_left,
+        crop_top,
+        input_w,
+        input_h,
+        pad_x,
+        pad_y,
+    )
+    face_left = _safe_landmark_xy(
+        face_landmarks,
+        _FACE_WIDTH_INDICES[0],
+        crop_left,
+        crop_top,
+        input_w,
+        input_h,
+        pad_x,
+        pad_y,
+    )
+    face_right = _safe_landmark_xy(
+        face_landmarks,
+        _FACE_WIDTH_INDICES[1],
+        crop_left,
+        crop_top,
+        input_w,
+        input_h,
+        pad_x,
+        pad_y,
+    )
+    if mouth_center is None or mouth_left is None or mouth_right is None:
+        return _handle_hand_mouth_gap(config, now_ts)
+
+    mouth_width = _distance(mouth_left, mouth_right)
+    face_width = 0.0
+    if face_left is not None and face_right is not None:
+        face_width = _distance(face_left, face_right)
+    face_width = max(face_width, mouth_width * 2.8)
+    if face_width < HAND_MOUTH_MIN_FACE_WIDTH_PX:
+        return _handle_hand_mouth_gap(config, now_ts)
+
+    closest_finger_xy = None
+    closest_distance_ratio = float("inf")
+    for landmarks in hand_landmarks:
+        finger_xy = _safe_landmark_xy(
+            landmarks,
+            _INDEX_FINGER_TIP_INDEX,
+            crop_left,
+            crop_top,
+            input_w,
+            input_h,
+            pad_x,
+            pad_y,
+        )
+        if finger_xy is None:
+            continue
+        distance_ratio = _distance(finger_xy, mouth_center) / max(1.0, face_width)
+        if distance_ratio < closest_distance_ratio:
+            closest_distance_ratio = distance_ratio
+            closest_finger_xy = finger_xy
+    if closest_finger_xy is None:
+        return _handle_hand_mouth_gap(config, now_ts)
+
+    previous_distance_ratio = float(getattr(config, "person_proxy_last_distance_ratio", float("inf")))
+    previous_finger_xy = getattr(config, "person_proxy_last_finger_xy", None)
+    previous_mouth_xy = getattr(config, "person_proxy_last_mouth_xy", None)
+    approach_delta_ratio = 0.0
+    direction_cosine = 0.0
+    if math.isfinite(previous_distance_ratio):
+        approach_delta_ratio = max(0.0, previous_distance_ratio - closest_distance_ratio)
+    if previous_finger_xy is not None:
+        motion_vector = (
+            closest_finger_xy[0] - previous_finger_xy[0],
+            closest_finger_xy[1] - previous_finger_xy[1],
+        )
+        target_origin = previous_mouth_xy if previous_mouth_xy is not None else mouth_center
+        target_vector = (
+            target_origin[0] - previous_finger_xy[0],
+            target_origin[1] - previous_finger_xy[1],
+        )
+        direction_cosine = _direction_cosine(motion_vector, target_vector)
+
+    if (
+        closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.35)
+        and approach_delta_ratio >= HAND_MOUTH_MIN_APPROACH_DELTA_RATIO
+        and direction_cosine >= HAND_MOUTH_MIN_DIRECTION_COSINE
+    ):
+        config.person_proxy_last_approach_ts = now_ts
+
+    recent_approach = (
+        now_ts - float(getattr(config, "person_proxy_last_approach_ts", 0.0))
+    ) <= HAND_MOUTH_APPROACH_WINDOW_SECONDS
+    within_threshold = closest_distance_ratio <= HAND_MOUTH_MAX_DISTANCE_RATIO
+
+    dwell_started_at = float(getattr(config, "person_proxy_dwell_started_at", 0.0))
+    if within_threshold:
+        if recent_approach and dwell_started_at <= 0.0:
+            config.person_proxy_dwell_started_at = now_ts
     else:
-        config.person_proxy_trigger_streak = max(0, int(getattr(config, "person_proxy_trigger_streak", 0)) - 1)
-    triggered = int(getattr(config, "person_proxy_trigger_streak", 0)) >= PERSON_PROXY_CONFIRM_FRAMES
+        config.person_proxy_dwell_started_at = 0.0
+
+    dwell_started_at = float(getattr(config, "person_proxy_dwell_started_at", 0.0))
+    dwell_elapsed = max(0.0, now_ts - dwell_started_at) if dwell_started_at > 0.0 else 0.0
+    triggered = within_threshold and dwell_started_at > 0.0 and dwell_elapsed >= HAND_MOUTH_MIN_DWELL_SECONDS
     if triggered:
-        config.person_proxy_active_until = now_ts + PERSON_PROXY_HOLD_SECONDS
-    active = now_ts <= float(getattr(config, "person_proxy_active_until", 0.0))
-    score = min(1.5, max(0.0, smoothed_score))
-    if active:
-        score = max(score, PERSON_PROXY_SCORE_FLOOR)
-    return active, round(score, 3)
+        config.person_proxy_active_until = now_ts + HAND_MOUTH_HOLD_SECONDS
+    active_until = float(getattr(config, "person_proxy_active_until", 0.0))
+    active = active_until > 0.0 and now_ts <= active_until
+
+    config.person_proxy_last_seen_ts = now_ts
+    config.person_proxy_last_distance_ratio = closest_distance_ratio
+    config.person_proxy_last_finger_xy = closest_finger_xy
+    config.person_proxy_last_mouth_xy = mouth_center
+
+    score = _hand_mouth_score(
+        distance_ratio=closest_distance_ratio,
+        dwell_elapsed=dwell_elapsed,
+        approach_delta_ratio=approach_delta_ratio,
+        direction_cosine=direction_cosine,
+        active=active,
+    )
+    return active, score

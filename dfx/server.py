@@ -302,12 +302,24 @@ class DashboardHandler(BaseHTTPRequestHandler):
             width = int(config.width)
             height = int(config.height)
             jpeg_quality = int(config.jpeg_quality)
+            detection_enabled = bool(config.detection_enabled)
+            conf = float(config.conf)
+            iou = float(config.iou)
+            inference_imgsz = int(config.inference_imgsz)
+            max_inference_fps = float(config.max_inference_fps)
+            inference_device = str(getattr(config, "inference_device", "cpu"))
         camera_manager.update_primary_camera(camera_index)
         camera_manager.update_stream_settings(
             stream_fps=stream_fps,
             width=width,
             height=height,
             jpeg_quality=jpeg_quality,
+            detection_enabled=detection_enabled,
+            conf=conf,
+            iou=iou,
+            inference_imgsz=inference_imgsz,
+            max_inference_fps=max_inference_fps,
+            inference_device=inference_device,
         )
 
     def _send_active_cameras(self):

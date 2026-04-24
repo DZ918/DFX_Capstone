@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 
@@ -11,7 +12,15 @@ except Exception:
     cv2 = None
 
 from dfx.camera import _open_camera_capture
-from dfx.detection import make_status_frame
+from dfx.detection import (
+    detections_from_result,
+    draw_detections,
+    get_allowed_class_ids,
+    make_status_frame,
+)
+from dfx.gpu import predict_with_fallback
+
+logger = logging.getLogger(__name__)
 
 
 class CameraPreview:
@@ -21,11 +30,13 @@ class CameraPreview:
         self,
         camera_index: int,
         *,
+        manager,
         stream_fps: float,
         width: int,
         height: int,
         jpeg_quality: int,
     ):
+        self._manager = manager
         self.camera_index = int(camera_index)
         self.available = False
         self.error = "Connecting..."
@@ -136,6 +147,8 @@ class CameraPreview:
 
     def _run(self):
         reconnect_delay = 1.0
+        last_detections: list[dict] = []
+        next_inference_at = 0.0
         self._publish_status("Connecting...")
         while not self._stop_event.is_set():
             if cv2 is None:
@@ -162,7 +175,31 @@ class CameraPreview:
                 if not ok:
                     self._publish_status(f"Camera {self.camera_index} reconnecting")
                     break
-                payload = self._encode_frame(frame)
+                detections = last_detections
+                settings = self._manager.detection_settings_snapshot()
+                if settings["enabled"]:
+                    perf_now = time.perf_counter()
+                    inference_due = (
+                        settings["max_inference_fps"] <= 0.0 or perf_now >= next_inference_at
+                    )
+                    if inference_due:
+                        if settings["max_inference_fps"] > 0.0:
+                            next_inference_at = perf_now + (1.0 / max(0.1, settings["max_inference_fps"]))
+                        else:
+                            next_inference_at = 0.0
+                        maybe_detections = self._manager.predict_detections(frame)
+                        if maybe_detections is not None:
+                            last_detections = maybe_detections
+                            detections = maybe_detections
+                    else:
+                        detections = last_detections
+                else:
+                    last_detections = []
+                    detections = []
+                    next_inference_at = 0.0
+
+                annotated_frame = draw_detections(frame, detections) if detections else frame
+                payload = self._encode_frame(annotated_frame)
                 if payload is not None:
                     self._set_state(payload, available=True, error="", frame=frame)
                 with self._settings_lock:
@@ -188,6 +225,16 @@ class CameraManager:
         width: int,
         height: int,
         jpeg_quality: int,
+        model,
+        model_lock,
+        detection_enabled: bool,
+        conf: float,
+        iou: float,
+        inference_imgsz: int,
+        max_inference_fps: float,
+        inference_device: str,
+        tracked_class_names: set[str],
+        allowed_class_names: set[str],
     ):
         self._lock = threading.Lock()
         self._preview_cameras: dict[int, CameraPreview] = {}
@@ -196,6 +243,22 @@ class CameraManager:
         self._width = int(width)
         self._height = int(height)
         self._jpeg_quality = int(jpeg_quality)
+        self._model = model
+        self._model_lock = model_lock
+        self._detection_enabled = bool(detection_enabled)
+        self._conf = float(conf)
+        self._iou = float(iou)
+        self._inference_imgsz = int(inference_imgsz)
+        self._max_inference_fps = float(max_inference_fps)
+        self._inference_device = str(inference_device or "cpu")
+        self._tracked_class_names = {
+            str(name).strip().lower() for name in tracked_class_names if str(name).strip()
+        }
+        self._allowed_class_names = {
+            str(name).strip().lower() for name in allowed_class_names if str(name).strip()
+        }
+        self._allowed_ids = None
+        self._last_inference_error = ""
 
     def update_primary_camera(self, camera_index: int):
         """Move the primary role to a new camera and release duplicate previews."""
@@ -206,13 +269,38 @@ class CameraManager:
         if preview is not None:
             preview.stop()
 
-    def update_stream_settings(self, *, stream_fps: float, width: int, height: int, jpeg_quality: int):
-        """Propagate stream-related runtime settings to active preview workers."""
+    def update_stream_settings(
+        self,
+        *,
+        stream_fps: float,
+        width: int,
+        height: int,
+        jpeg_quality: int,
+        detection_enabled: bool | None = None,
+        conf: float | None = None,
+        iou: float | None = None,
+        inference_imgsz: int | None = None,
+        max_inference_fps: float | None = None,
+        inference_device: str | None = None,
+    ):
+        """Propagate stream and inference settings to active preview workers."""
         with self._lock:
             self._stream_fps = float(stream_fps)
             self._width = int(width)
             self._height = int(height)
             self._jpeg_quality = int(jpeg_quality)
+            if detection_enabled is not None:
+                self._detection_enabled = bool(detection_enabled)
+            if conf is not None:
+                self._conf = float(conf)
+            if iou is not None:
+                self._iou = float(iou)
+            if inference_imgsz is not None:
+                self._inference_imgsz = int(inference_imgsz)
+            if max_inference_fps is not None:
+                self._max_inference_fps = float(max_inference_fps)
+            if inference_device is not None:
+                self._inference_device = str(inference_device or "cpu")
             previews = list(self._preview_cameras.values())
         for preview in previews:
             preview.update_settings(
@@ -237,6 +325,7 @@ class CameraManager:
                 return {"ok": False, "error": f"Camera {index} is already active"}
             preview = CameraPreview(
                 index,
+                manager=self,
                 stream_fps=self._stream_fps,
                 width=self._width,
                 height=self._height,
@@ -263,6 +352,91 @@ class CameraManager:
         with self._lock:
             preview = self._preview_cameras.get(int(camera_index))
         return preview
+
+    def update_runtime_detection_config(
+        self,
+        *,
+        model=None,
+        inference_device: str | None = None,
+        tracked_class_names: set[str] | None = None,
+        allowed_class_names: set[str] | None = None,
+    ):
+        """Update the shared live model or class filters after training finishes."""
+        with self._lock:
+            if model is not None and model is not self._model:
+                self._model = model
+                self._allowed_ids = None
+            if inference_device is not None:
+                self._inference_device = str(inference_device or "cpu")
+            if tracked_class_names is not None:
+                self._tracked_class_names = {
+                    str(name).strip().lower() for name in tracked_class_names if str(name).strip()
+                }
+            if allowed_class_names is not None:
+                normalized_allowed = {
+                    str(name).strip().lower() for name in allowed_class_names if str(name).strip()
+                }
+                if normalized_allowed != self._allowed_class_names:
+                    self._allowed_class_names = normalized_allowed
+                    self._allowed_ids = None
+
+    def detection_settings_snapshot(self) -> dict:
+        """Return the current preview detection settings."""
+        with self._lock:
+            return {
+                "enabled": bool(self._detection_enabled and self._model is not None),
+                "max_inference_fps": float(self._max_inference_fps),
+            }
+
+    def predict_detections(self, frame) -> list[dict] | None:
+        """Run one throttled prediction for a preview frame, or skip when the model is busy."""
+        with self._lock:
+            model = self._model
+            model_lock = self._model_lock
+            detection_enabled = bool(self._detection_enabled)
+            conf = float(self._conf)
+            iou = float(self._iou)
+            inference_imgsz = int(self._inference_imgsz)
+            inference_device = str(self._inference_device or "cpu")
+            allowed_ids = self._allowed_ids
+            allowed_class_names = set(self._allowed_class_names)
+            tracked_class_names = set(self._tracked_class_names)
+
+        if not detection_enabled or model is None or model_lock is None:
+            return []
+        if not model_lock.acquire(blocking=False):
+            return None
+
+        try:
+            if allowed_ids is None:
+                allowed_ids = get_allowed_class_ids(model, allowed_class_names)
+                with self._lock:
+                    self._allowed_ids = allowed_ids
+            predict_kwargs = {
+                "verbose": False,
+                "conf": conf,
+                "iou": iou,
+                "imgsz": inference_imgsz,
+                "classes": allowed_ids if allowed_ids else None,
+                "device": inference_device,
+            }
+            results = predict_with_fallback(model, frame, **predict_kwargs)
+            selected_device = str(
+                getattr(model, "_dfx_inference_device_override", inference_device)
+            ).strip() or "cpu"
+            with self._lock:
+                self._inference_device = selected_device
+                self._last_inference_error = ""
+        except Exception as exc:
+            logger.warning("Preview inference failed for auxiliary camera: %s", exc)
+            with self._lock:
+                self._last_inference_error = str(exc)
+            return []
+        finally:
+            model_lock.release()
+
+        result = results[0]
+        return detections_from_result(result, allowed_names=tracked_class_names)
 
     def status_snapshot(self) -> list[dict]:
         """Return status snapshots for all active auxiliary preview cameras."""

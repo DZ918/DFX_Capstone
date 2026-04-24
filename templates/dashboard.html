@@ -534,6 +534,62 @@
         min-height: 16px;
         color: #94a3b8;
       }
+      .stale-alert-modal-card {
+        width: min(860px, 96vw);
+      }
+      .stale-alert-modal-body {
+        padding: 12px;
+        background: #020617;
+        display: grid;
+        gap: 12px;
+      }
+      .stale-alert-list {
+        display: grid;
+        gap: 10px;
+      }
+      .stale-alert-item {
+        display: grid;
+        gap: 8px;
+        padding: 12px;
+        border: 1px solid rgba(148, 163, 184, 0.28);
+        border-radius: 10px;
+        background: rgba(15, 23, 42, 0.9);
+      }
+      .stale-alert-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .stale-alert-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: #e2e8f0;
+      }
+      .stale-alert-meta {
+        font-size: 12px;
+        color: #94a3b8;
+      }
+      .stale-alert-actions {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .stale-alert-actions button {
+        border: 0;
+        border-radius: 8px;
+        padding: 7px 11px;
+        font-size: 12px;
+        cursor: pointer;
+        color: #fff;
+        background: #1f2937;
+      }
+      .stale-alert-actions button.reject {
+        background: #991b1b;
+      }
+      .stale-alert-actions button.alt {
+        background: #475569;
+      }
       @media (max-width: 600px) {
         .camera-toolbar { align-items: stretch; }
         .camera-manager-form { width: 100%; }
@@ -776,6 +832,21 @@
         </div>
       </div>
     </div>
+    <div id="staleAlertModal" class="map-modal" aria-hidden="true">
+      <div class="map-modal-card stale-alert-modal-card">
+        <div class="map-modal-head">
+          <strong>Uncleared Alerts</strong>
+          <button id="staleAlertModalClose" class="map-modal-close" type="button" aria-label="Close overdue alerts">×</button>
+        </div>
+        <div class="map-modal-body stale-alert-modal-body">
+          <div class="map-modal-note">These alerts have been active for at least 30 minutes without being accepted or rejected.</div>
+          <div id="staleAlertList" class="stale-alert-list"></div>
+          <div class="stale-alert-actions">
+            <button id="staleAlertDismiss" type="button" class="alt">Remind me later</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <script>
       // Escape user-controlled strings before placing them into HTML templates.
       function escapeHtml(value) {
@@ -932,6 +1003,217 @@
         }
         const text = await res.text().catch(() => '');
         return text || `HTTP ${res.status}`;
+      }
+
+      const ALERT_POPUP_AFTER_MS = 30 * 60 * 1000;
+      let alertAudioContext = null;
+      let alertAudioUnlocked = false;
+      let lastActiveAlertIds = new Set();
+      let hasLoadedAlertsOnce = false;
+      let dismissedStaleAlertsFingerprint = '';
+
+      function ensureAlertAudioContext() {
+        if (alertAudioContext) {
+          return alertAudioContext;
+        }
+        const AudioCtor = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtor) {
+          return null;
+        }
+        alertAudioContext = new AudioCtor();
+        alertAudioUnlocked = alertAudioContext.state === 'running';
+        return alertAudioContext;
+      }
+
+      async function unlockAlertAudio() {
+        const ctx = ensureAlertAudioContext();
+        if (!ctx) {
+          return;
+        }
+        if (ctx.state === 'suspended') {
+          try {
+            await ctx.resume();
+          } catch (_err) {
+            return;
+          }
+        }
+        alertAudioUnlocked = ctx.state === 'running';
+      }
+
+      function setupAlertAudio() {
+        window.addEventListener('pointerdown', unlockAlertAudio, { passive: true });
+        window.addEventListener('keydown', unlockAlertAudio);
+      }
+
+      function playAlertSound() {
+        const ctx = ensureAlertAudioContext();
+        if (!ctx || !alertAudioUnlocked) {
+          return;
+        }
+        const startAt = ctx.currentTime + 0.01;
+        [0, 0.18].forEach((offset, index) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sine';
+          osc.frequency.value = index === 0 ? 880 : 660;
+          gain.gain.setValueAtTime(0.0001, startAt + offset);
+          gain.gain.exponentialRampToValueAtTime(0.08, startAt + offset + 0.02);
+          gain.gain.exponentialRampToValueAtTime(0.0001, startAt + offset + 0.16);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(startAt + offset);
+          osc.stop(startAt + offset + 0.18);
+        });
+      }
+
+      function alertStatus(alert) {
+        return String(alert && alert.status ? alert.status : 'new').trim().toLowerCase() || 'new';
+      }
+
+      function parseAlertTimestampMs(alert) {
+        const parsed = Date.parse(String(alert && alert.timestamp ? alert.timestamp : ''));
+        return Number.isFinite(parsed) ? parsed : NaN;
+      }
+
+      function activeAlertsOnly(alerts) {
+        return alerts.filter((alert) => alertStatus(alert) !== 'accepted');
+      }
+
+      function staleAlertFingerprint(alerts) {
+        return alerts
+          .map((alert) => `${alert.id || ''}:${alert.status || ''}:${alert.timestamp || ''}`)
+          .join('||');
+      }
+
+      function staleAlertsOnly(alerts) {
+        const nowMs = Date.now();
+        return activeAlertsOnly(alerts).filter((alert) => {
+          const ts = parseAlertTimestampMs(alert);
+          return Number.isFinite(ts) && (nowMs - ts) >= ALERT_POPUP_AFTER_MS;
+        });
+      }
+
+      function formatAlertAgeLabel(alert) {
+        const ts = parseAlertTimestampMs(alert);
+        if (!Number.isFinite(ts)) {
+          return 'age unknown';
+        }
+        const totalMinutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+        const hours = Math.floor(totalMinutes / 60);
+        const minutes = totalMinutes % 60;
+        if (hours <= 0) {
+          return `${totalMinutes}m old`;
+        }
+        if (minutes <= 0) {
+          return `${hours}h old`;
+        }
+        return `${hours}h ${minutes}m old`;
+      }
+
+      function renderStaleAlertItem(alert) {
+        const detections = Array.isArray(alert.detections) ? alert.detections : [];
+        const zone = alert.zone || (detections[0] && detections[0].zone) || 'Unassigned';
+        const summary = detections.length > 0
+          ? detections.slice(0, 3).map((det) => det.class_name || 'item').join(', ')
+          : 'landmark-only hand-to-mouth event';
+        const item = document.createElement('article');
+        item.className = 'stale-alert-item';
+        item.innerHTML =
+          `<div class="stale-alert-head">` +
+            `<div>` +
+              `<div class="stale-alert-title">${escapeHtml(zone)} | ${escapeHtml(summary)}</div>` +
+              `<div class="stale-alert-meta">${escapeHtml(alert.timestamp || 'unknown time')} | ${escapeHtml(formatAlertAgeLabel(alert))}</div>` +
+            `</div>` +
+            `<span class="badge status-new">Pending</span>` +
+          `</div>` +
+          `<div class="stale-alert-meta">Source: ${escapeHtml(String(alert.hand_to_mouth_source || 'standard').replaceAll('_', ' '))}</div>` +
+          `<div class="stale-alert-actions">` +
+            `<button type="button" data-action="accept">Accept</button>` +
+            `<button type="button" data-action="reject" class="reject">Reject</button>` +
+          `</div>`;
+        item.querySelectorAll('button[data-action]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            try {
+              button.disabled = true;
+              await manageAlert(alert.id, button.dataset.action);
+              await refreshAlerts();
+            } catch (err) {
+              document.getElementById('error').textContent = err.message || 'Could not update stale alert.';
+            } finally {
+              button.disabled = false;
+            }
+          });
+        });
+        return item;
+      }
+
+      function openStaleAlertModal(alerts) {
+        const modal = document.getElementById('staleAlertModal');
+        const list = document.getElementById('staleAlertList');
+        list.innerHTML = '';
+        alerts.forEach((alert) => {
+          list.appendChild(renderStaleAlertItem(alert));
+        });
+        modal.classList.add('open');
+        modal.setAttribute('aria-hidden', 'false');
+      }
+
+      function closeStaleAlertModal(markDismissed = true) {
+        const modal = document.getElementById('staleAlertModal');
+        modal.classList.remove('open');
+        modal.setAttribute('aria-hidden', 'true');
+        if (markDismissed) {
+          dismissedStaleAlertsFingerprint = staleAlertFingerprint(staleAlertsOnly(cachedOrderedAlerts));
+        }
+      }
+
+      function maybeNotifyAboutAlerts(orderedAlerts) {
+        const activeAlerts = activeAlertsOnly(orderedAlerts);
+        const nextActiveAlertIds = new Set(
+          activeAlerts
+            .map((alert) => String(alert.id || '').trim())
+            .filter((alertId) => alertId)
+        );
+        const hasNewActiveAlert = Array.from(nextActiveAlertIds).some((alertId) => !lastActiveAlertIds.has(alertId));
+        if (hasLoadedAlertsOnce && hasNewActiveAlert) {
+          playAlertSound();
+        }
+        hasLoadedAlertsOnce = true;
+        lastActiveAlertIds = nextActiveAlertIds;
+
+        const staleAlerts = staleAlertsOnly(orderedAlerts);
+        const fingerprint = staleAlertFingerprint(staleAlerts);
+        if (!staleAlerts.length) {
+          dismissedStaleAlertsFingerprint = '';
+          closeStaleAlertModal(false);
+          return;
+        }
+        const modal = document.getElementById('staleAlertModal');
+        if (modal.classList.contains('open')) {
+          openStaleAlertModal(staleAlerts);
+          return;
+        }
+        if (fingerprint !== dismissedStaleAlertsFingerprint) {
+          openStaleAlertModal(staleAlerts);
+        }
+      }
+
+      function setupStaleAlertModal() {
+        const modal = document.getElementById('staleAlertModal');
+        const closeBtn = document.getElementById('staleAlertModalClose');
+        const dismissBtn = document.getElementById('staleAlertDismiss');
+        closeBtn.addEventListener('click', () => closeStaleAlertModal(true));
+        dismissBtn.addEventListener('click', () => closeStaleAlertModal(true));
+        modal.addEventListener('click', (event) => {
+          if (event.target === modal) {
+            closeStaleAlertModal(true);
+          }
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape' && modal.classList.contains('open')) {
+            closeStaleAlertModal(true);
+          }
+        });
       }
 
       function setSettingsStatus(message, isError = false) {
@@ -1420,6 +1702,9 @@
                                             `<div class="det-label"><a href="/videos/${encodeURIComponent(alert.video_file)}" target="_blank" rel="noopener">Open/download recording</a></div>` +
                                             `</div>`
                                         : '';
+        const details = detections.length > 0
+          ? `<div class="det-grid">${detections.map(renderDetection).join('')}</div>`
+          : `<div class="empty-note">No object crop was attached to this alert. Review the hand-to-mouth motion metadata and recording.</div>`;
         const item = document.createElement('article');
         item.className = 'alert';
         item.innerHTML =
@@ -1427,7 +1712,7 @@
           `<span>${escapeHtml(alert.timestamp || 'unknown time')}</span></div>` +
                     `<div class="meta">${detections.length} detection(s)${escapeHtml(zoneTag + motionTag + motionSource + motionEvents)}</div>` +
                     video +
-          `<div class="det-grid">${detections.map(renderDetection).join('')}</div>` +
+          details +
           controls;
         item.querySelectorAll('button[data-action]').forEach(btn => {
           btn.addEventListener('click', async () => {
@@ -1521,6 +1806,7 @@
           const data = await res.json();
           const ordered = data.slice().reverse();
           cachedOrderedAlerts = ordered;
+          maybeNotifyAboutAlerts(ordered);
           const nextFingerprint = fingerprintAlerts(ordered);
           if (nextFingerprint === lastAlertsFingerprint) {
             return;
@@ -1805,10 +2091,12 @@
       }
 
             setupMapModal();
+          setupAlertAudio();
       setupLightbox();
       setupSettingsPanel();
       setupSettingsForm();
       setupCameraManager();
+          setupStaleAlertModal();
       setupAnnotation();
       refreshAlerts();
     refreshConsumptionStats();

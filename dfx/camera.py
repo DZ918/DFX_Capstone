@@ -25,6 +25,7 @@ from dfx.constants import (
     ALERT_DETECTION_CONFIDENCE_FLOOR,
     FOOD_CLASS_NAMES,
     FOOD_HAND_TO_MOUTH_EVENT_MIN_SCORE,
+    HAND_TO_MOUTH_FOOD_VISIBILITY_FLOOR,
     FOOD_MOTION_CONFIRM_FRAMES,
     FOOD_MOTION_MIN_SCORE,
     FOOD_OCCLUSION_LOOKBACK_SECONDS,
@@ -35,6 +36,7 @@ from dfx.constants import (
     NEW_OBJECT_MIN_ALERT_GAP_SECONDS,
     OCCLUDED_MOTION_HOLD_SECONDS,
     OCCLUDED_MOTION_PROXY_SCORE,
+    PROXY_HAND_TO_MOUTH_REQUIRED_EVENTS,
     PROXY_HAND_TO_MOUTH_EVENT_MIN_SCORE,
     SAME_PERSON_ALERT_WINDOW_SECONDS,
     SAME_PERSON_MAX_ALERTS_IN_WINDOW,
@@ -55,7 +57,12 @@ from dfx.detection import (
     make_status_frame,
 )
 from dfx.gpu import predict_with_fallback
-from dfx.motion import detect_consumption_motion, detect_person_hand_to_mouth_proxy
+from dfx.motion import (
+    detect_consumption_motion,
+    detect_person_hand_to_mouth_proxy,
+    reset_person_hand_to_mouth_state,
+)
+from dfx.training import runtime_food_class_names, refresh_runtime_class_names
 
 
 def _camera_backend_flag() -> int:
@@ -180,9 +187,7 @@ def _reset_motion_and_person_state(config):
     config.last_motion_active = False
     config.last_food_seen_ts = 0.0
     config.occlusion_motion_until = 0.0
-    config.person_proxy_prev_gray = None
-    config.person_proxy_active_until = 0.0
-    config.person_proxy_trigger_streak = 0
+    reset_person_hand_to_mouth_state(config)
     config.food_motion_confirm_streak = 0
     config.person_alert_history.clear()
     config.alert_object_history.clear()
@@ -272,6 +277,8 @@ def camera_worker(config, cam_index: int):
     last_motion_score = 0.0
     next_inference_at = 0.0
     allowed_ids = None
+    active_model = None
+    active_allowed_names: frozenset[str] = frozenset()
     recent_frames: deque = deque(maxlen=80)
 
     try:
@@ -358,6 +365,8 @@ def camera_worker(config, cam_index: int):
             motion_source = "none"
             inference_ran = False
             all_detections = detections
+            alert_detections: list[dict] = []
+            visible_food_detections: list[dict] = []
             person_detections: list[dict] = []
             if detection_enabled:
                 perf_now = time.perf_counter()
@@ -371,8 +380,19 @@ def camera_worker(config, cam_index: int):
                 with config.model_lock:
                     model = config.model
                     if inference_ran:
+                        allowed_names = set(
+                            getattr(config, "runtime_inference_class_names", INFERENCE_CLASS_NAMES)
+                        )
+                        tracked_names = set(
+                            getattr(config, "runtime_food_class_names", runtime_food_class_names(config))
+                        )
+                        allowed_names_key = frozenset(allowed_names)
+                        if model is not active_model or allowed_names_key != active_allowed_names:
+                            active_model = model
+                            active_allowed_names = allowed_names_key
+                            allowed_ids = None
                         if allowed_ids is None:
-                            allowed_ids = get_allowed_class_ids(model, INFERENCE_CLASS_NAMES)
+                            allowed_ids = get_allowed_class_ids(model, allowed_names)
                         predict_kwargs = {
                             "verbose": False,
                             "conf": conf,
@@ -390,14 +410,23 @@ def camera_worker(config, cam_index: int):
                             print(f"Warning: switched inference device to {selected_device}")
                 if inference_ran:
                     result = results[0]
-                    all_detections = detections_from_result(result, allowed_names=INFERENCE_CLASS_NAMES)
+                    all_detections = detections_from_result(result, allowed_names=allowed_names)
                     detections = [
                         det
                         for det in all_detections
+                        if str(det.get("class_name", "")).strip().lower() in tracked_names
+                    ]
+                    alert_detections = [
+                        det
+                        for det in detections
                         if (
-                            str(det.get("class_name", "")).strip().lower() in FOOD_CLASS_NAMES
-                            and float(det.get("confidence", 0.0)) >= ALERT_DETECTION_CONFIDENCE_FLOOR
+                            float(det.get("confidence", 0.0)) >= ALERT_DETECTION_CONFIDENCE_FLOOR
                         )
+                    ]
+                    visible_food_detections = [
+                        det
+                        for det in detections
+                        if float(det.get("confidence", 0.0)) >= HAND_TO_MOUTH_FOOD_VISIBILITY_FLOOR
                     ]
                     person_detections = [
                         det
@@ -429,12 +458,12 @@ def camera_worker(config, cam_index: int):
                             person_detections,
                             wall_now,
                         )
-                        if not motion_detected and not detections and person_proxy_detected:
+                        if not motion_detected and not visible_food_detections and person_proxy_detected:
                             # Allow alerting on pure hand-to-mouth gesture only when no food object is visible.
                             motion_detected = True
                             motion_score = max(float(motion_score), float(person_proxy_score))
                             motion_source = "person_proxy"
-                        if detections:
+                        if visible_food_detections:
                             config.last_food_seen_ts = wall_now
                         if not motion_detected:
                             # Keep motion active briefly when food is momentarily occluded by a hand.
@@ -442,7 +471,7 @@ def camera_worker(config, cam_index: int):
                                 (wall_now - float(config.last_food_seen_ts)) <= FOOD_OCCLUSION_LOOKBACK_SECONDS
                             )
                             if (
-                                not detections
+                                not visible_food_detections
                                 and bool(person_detections)
                                 and recently_saw_food
                                 and wall_now <= float(config.occlusion_motion_until)
@@ -464,12 +493,12 @@ def camera_worker(config, cam_index: int):
                         and (
                             (
                                 motion_source == "food_track"
-                                and bool(detections)
+                                and bool(visible_food_detections)
                                 and float(motion_score) >= FOOD_HAND_TO_MOUTH_EVENT_MIN_SCORE
                             )
                             or (
                                 motion_source in {"person_proxy", "food_occluded"}
-                                and not bool(detections)
+                                and not bool(visible_food_detections)
                                 and float(motion_score) >= PROXY_HAND_TO_MOUTH_EVENT_MIN_SCORE
                             )
                         )
@@ -498,7 +527,7 @@ def camera_worker(config, cam_index: int):
                 motion_score = 0.0
 
             # This debounce logic makes "item stays in view" produce one alert rather than many.
-            if detection_enabled and inference_ran and detections:
+            if detection_enabled and inference_ran and alert_detections:
                 config.consecutive += 1
                 config.clear_count = 0
             elif detection_enabled and inference_ran:
@@ -518,12 +547,16 @@ def camera_worker(config, cam_index: int):
             motion_burst_trigger = (
                 inference_ran
                 and motion_detected
-                and (bool(detections) or bool(person_detections))
-                and len(config.motion_event_times) >= HAND_TO_MOUTH_REQUIRED_EVENTS
+                and (bool(visible_food_detections) or bool(person_detections) or motion_source == "person_proxy")
+                and len(config.motion_event_times) >= (
+                    PROXY_HAND_TO_MOUTH_REQUIRED_EVENTS
+                    if motion_source == "person_proxy"
+                    else HAND_TO_MOUTH_REQUIRED_EVENTS
+                )
             )
             stationary_followup_trigger = (
                 inference_ran
-                and bool(detections)
+                and bool(alert_detections)
                 and not motion_detected
                 and config.stationary_first_alert_ts > 0.0
                 and not config.stationary_followup_sent
@@ -531,7 +564,7 @@ def camera_worker(config, cam_index: int):
             )
             initial_trigger = (
                 inference_ran
-                and detections
+                and alert_detections
                 and config.consecutive >= max(1, persist_frames)
                 and config.armed
                 and (wall_now - config.last_alert_ts) >= max(0.0, cooldown)
@@ -539,18 +572,18 @@ def camera_worker(config, cam_index: int):
             frame_diag = math.hypot(float(frame.shape[1]), float(frame.shape[0]))
             new_object_trigger = (
                 inference_ran
-                and bool(detections)
+                and bool(alert_detections)
                 and (wall_now - config.last_alert_ts) >= NEW_OBJECT_MIN_ALERT_GAP_SECONDS
                 and has_novel_alert_object(
                     config,
-                    detections,
+                    alert_detections,
                     frame_diag=frame_diag,
                     now_ts=wall_now,
                 )
             )
 
             same_person_suppressed = False
-            alert_person_center = select_alert_person_center(person_detections, detections)
+            alert_person_center = select_alert_person_center(person_detections, alert_detections)
             same_person_suppressed = _is_same_person_suppressed(
                 config,
                 alert_person_center,
@@ -572,7 +605,7 @@ def camera_worker(config, cam_index: int):
                     reason = "stationary_followup"
                 alert_payload = {
                     "frame": frame.copy(),
-                    "detections": deepcopy(detections),
+                    "detections": deepcopy(alert_detections),
                     "snippet_dir": config.snippet_dir,
                     "video_dir": config.video_dir,
                     "recent_frames": list(recent_frames),
@@ -583,16 +616,13 @@ def camera_worker(config, cam_index: int):
                     "motion_score": motion_score,
                     "hand_to_mouth_source": motion_source,
                     "hand_to_mouth_event_count": len(config.motion_event_times),
-                    "attach_video": (
-                        motion_burst_trigger
-                        and (bool(detections) or bool(person_detections))
-                    ),
+                    "attach_video": bool(motion_burst_trigger),
                     "alert_reason": reason,
                 }
                 if not _enqueue_alert_job(config, alert_payload):
                     _persist_alert_synchronously(config, alert_payload)
                 config.last_alert_ts = wall_now
-                remember_alert_objects(config, detections, wall_now)
+                remember_alert_objects(config, alert_detections, wall_now)
                 if alert_person_center is not None:
                     config.person_alert_history.append(
                         (

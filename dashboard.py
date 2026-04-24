@@ -20,36 +20,19 @@ from dfx.gpu import (
 from dfx.camera import camera_worker
 from dfx.alerts import append_alert, create_alert
 from dfx.multicam import CameraManager
+from dfx.model_loader import load_inference_model
 from dfx.server import DashboardHandler, HTML_PAGE as DASHBOARD_HTML_PAGE
 from dfx.settings import DashboardConfig
-from dfx.constants import DEFAULT_MAP_IMAGE_PATH, INFERENCE_CLASS_NAMES
-
-try:
-    from ultralytics import YOLO, YOLOWorld
-except Exception:
-    YOLO = None
-    YOLOWorld = None
+from dfx.training import refresh_runtime_class_names
+from dfx.constants import (
+    DEFAULT_DASHBOARD_CONFIDENCE,
+    DEFAULT_DASHBOARD_MODEL_PATH,
+    DEFAULT_MAP_IMAGE_PATH,
+    INFERENCE_CLASS_NAMES,
+)
 
 # Ensure Jetson Orin Nano CUDA libraries are linked before PyTorch initializes
 configure_jetson_gpu_env()
-
-def load_inference_model(model_path: str):
-    """Load YOLO model; configure open-vocabulary classes for YOLO-World."""
-    if YOLO is None:
-        raise RuntimeError("ultralytics is required unless --test is used.")
-    if "world" in os.path.basename(str(model_path)).lower():
-        fallback_path = os.environ.get("YOLO_FALLBACK_MODEL", "yolov8n.pt")
-        if YOLOWorld is None:
-            print(f"Warning: YOLOWorld unavailable. Falling back to {fallback_path}.")
-            return YOLO(fallback_path)
-        try:
-            model = YOLOWorld(model_path)
-        except Exception:
-            print(f"Warning: could not load '{model_path}'. Falling back to {fallback_path}.")
-            return YOLO(fallback_path)
-        model.set_classes(sorted(INFERENCE_CLASS_NAMES))
-        return model
-    return YOLO(model_path)
 
 
 class StandaloneDashboardHandler(DashboardHandler):
@@ -130,7 +113,7 @@ def main():
     """Start the camera worker and HTTP server that power the dashboard."""
     parser = argparse.ArgumentParser(description="Camera dashboard with live alerts")
     parser.add_argument("--test", action="store_true", help="Run with synthetic feed/alerts")
-    parser.add_argument("--model", default="yolov8n.pt", help="Path to YOLO model weights")
+    parser.add_argument("--model", default=DEFAULT_DASHBOARD_MODEL_PATH, help="Path to YOLO model weights")
     parser.add_argument("--cam", type=int, default=0, help="Camera index")
     parser.add_argument("--host", default="0.0.0.0", help="Host interface")
     parser.add_argument("--port", type=int, default=8000, help="Port")
@@ -150,7 +133,7 @@ def main():
     parser.add_argument("--camera-zone", default="Zone A")
     parser.add_argument("--map-image", default=DEFAULT_MAP_IMAGE_PATH)
     parser.add_argument("--fps", type=int, default=10)
-    parser.add_argument("--conf", type=float, default=0.55)
+    parser.add_argument("--conf", type=float, default=DEFAULT_DASHBOARD_CONFIDENCE)
     parser.add_argument("--iou", type=float, default=0.40)
     parser.add_argument("--persist-frames", type=int, default=5)
     parser.add_argument("--cooldown", type=float, default=15.0)
@@ -198,6 +181,7 @@ def main():
         test_mode=args.test,
     )
     config.inference_device = inference_device
+    runtime_food_names, runtime_inference_names = refresh_runtime_class_names(config)
     config.frame_queue = queue.Queue(maxsize=2)
     config.frame_ready_event = threading.Event()
     config.latest_frame_ts = 0.0
@@ -220,7 +204,18 @@ def main():
         width=config.width,
         height=config.height,
         jpeg_quality=config.jpeg_quality,
+        model=config.model,
+        model_lock=config.model_lock,
+        detection_enabled=config.detection_enabled,
+        conf=config.conf,
+        iou=config.iou,
+        inference_imgsz=config.inference_imgsz,
+        max_inference_fps=config.max_inference_fps,
+        inference_device=config.inference_device,
+        tracked_class_names=runtime_food_names,
+        allowed_class_names=runtime_inference_names,
     )
+    config.camera_manager = camera_manager
     server = ThreadingHTTPServer((args.host, args.port), StandaloneDashboardHandler)
     server.config = config
     server.camera_manager = camera_manager

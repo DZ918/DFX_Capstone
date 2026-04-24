@@ -16,10 +16,11 @@ try:
 except Exception:
     YOLO = None
 
-from dfx.constants import TRAIN_VIDEO_SAMPLE_MAX_FRAMES
+from dfx.constants import FOOD_CLASS_NAMES, TRAIN_VIDEO_SAMPLE_MAX_FRAMES
 from dfx.detection import safe_token
 from dfx.alerts import read_alerts, write_alerts, ensure_alert_metadata
 from dfx.gpu import get_best_device, is_jetson_linux, prepare_model_for_inference
+from dfx.model_loader import load_inference_model
 
 
 def _move_model_to_device(model, device: str) -> None:
@@ -176,6 +177,25 @@ def write_class_map(path: str, class_map: dict[str, int]) -> None:
     """Persist the training class map in a deterministic format."""
     with open(path, "w", encoding="utf-8") as handle:
         json.dump(class_map, handle, indent=2, sort_keys=True)
+
+
+def runtime_food_class_names(config) -> set[str]:
+    """Return the union of built-in food classes and any trained class-map entries."""
+    names = {str(name).strip().lower() for name in FOOD_CLASS_NAMES if str(name).strip()}
+    for class_name in read_class_map(config.class_map_path).keys():
+        normalized = str(class_name).strip().lower()
+        if normalized:
+            names.add(normalized)
+    return names
+
+
+def refresh_runtime_class_names(config) -> tuple[set[str], set[str]]:
+    """Refresh the runtime class filters used by live inference and preview overlays."""
+    food_names = runtime_food_class_names(config)
+    inference_names = set(food_names) | {"person"}
+    config.runtime_food_class_names = set(food_names)
+    config.runtime_inference_class_names = set(inference_names)
+    return food_names, inference_names
 
 
 def update_dataset_yaml(config, class_map: dict[str, int]) -> None:
@@ -472,6 +492,7 @@ def _train_on_accepted_samples(config) -> None:
     
     inference_model = getattr(config, "model", None)
     inference_device = str(getattr(config, "inference_device", "cpu"))
+    hot_swap_completed = False
 
     # Move the live inference model off GPU so training owns the limited Jetson VRAM.
     if inference_model is not None:
@@ -543,7 +564,30 @@ def _train_on_accepted_samples(config) -> None:
         with config.training_lock:
             config.training_last_completed_at = datetime.now().isoformat(timespec="seconds")
             config.training_last_weights = best_path
-            config.training_last_message = "Training completed; weights saved for manual review"
+            config.training_last_message = "Training completed; loading best weights"
+
+        if best_path:
+            live_model = load_inference_model(best_path)
+            selected_device = prepare_model_for_inference(live_model, inference_device)
+            with config.model_lock:
+                config.model = live_model
+                config.model_path = best_path
+                config.inference_device = selected_device
+            food_names, inference_names = refresh_runtime_class_names(config)
+            camera_manager = getattr(config, "camera_manager", None)
+            if camera_manager is not None:
+                camera_manager.update_runtime_detection_config(
+                    model=live_model,
+                    inference_device=selected_device,
+                    tracked_class_names=food_names,
+                    allowed_class_names=inference_names,
+                )
+            hot_swap_completed = True
+            with config.training_lock:
+                config.training_last_message = "Training completed; live model updated"
+        else:
+            with config.training_lock:
+                config.training_last_message = "Training completed; no best.pt found"
 
         # Clean up exported snippets, videos, and stale run artifacts
         _cleanup_after_training(config)
@@ -555,7 +599,7 @@ def _train_on_accepted_samples(config) -> None:
     finally:
         _restore_pin_memory()
 
-        if inference_model is not None:
+        if inference_model is not None and not hot_swap_completed:
             with config.model_lock:
                 try:
                     prepare_model_for_inference(inference_model, inference_device)
