@@ -5,5 +5,7 @@
   "donut": 1,
   "hand_to_mouth": 6,
   "hot dog": 3,
-  "pizza": 5
+  "pizza": 5,
+  "snacks": 8,
+  "soda_can": 7
 }

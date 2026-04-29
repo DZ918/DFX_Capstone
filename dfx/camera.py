@@ -66,6 +66,11 @@ from dfx.motion import (
 from dfx.training import runtime_food_class_names, refresh_runtime_class_names
 
 
+_ALERT_MIN_BOX_AREA_RATIO = 0.0012
+_DRINK_ALERT_CLASS_NAMES = {"bottle", "cup", "drink", "drinks"}
+_DRINK_ALERT_CONFIDENCE_FLOOR = max(0.70, ALERT_DETECTION_CONFIDENCE_FLOOR + 0.08)
+
+
 def _camera_backend_flag() -> int:
     """Prefer AVFoundation on macOS so camera probing stays on the native backend."""
     if cv2 is None:
@@ -291,6 +296,102 @@ def _build_hand_to_mouth_alert_marker(config, frame, person_detections: list[dic
     }
 
 
+def _person_centers(person_detections: list[dict]) -> list[tuple[float, float]]:
+    """Return person centers used to bias alerts toward likely real interactions."""
+    centers: list[tuple[float, float]] = []
+    for det in person_detections:
+        center = det.get("center_xy") if isinstance(det, dict) else None
+        if not isinstance(center, (list, tuple)) or len(center) != 2:
+            continue
+        try:
+            centers.append((float(center[0]), float(center[1])))
+        except (TypeError, ValueError):
+            continue
+    return centers
+
+
+def _detection_area_ratio(det: dict, frame_w: int, frame_h: int) -> float:
+    """Compute one detection area ratio relative to the current frame."""
+    bbox = det.get("bbox_xyxy") if isinstance(det, dict) else None
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return 0.0
+    try:
+        x1, y1, x2, y2 = (float(v) for v in bbox)
+    except (TypeError, ValueError):
+        return 0.0
+    width = max(0.0, x2 - x1)
+    height = max(0.0, y2 - y1)
+    frame_area = max(1.0, float(frame_w) * float(frame_h))
+    return (width * height) / frame_area
+
+
+def _detection_min_person_distance(det: dict, people_centers: list[tuple[float, float]]) -> float | None:
+    """Return nearest-person distance for one detection center, or None if unavailable."""
+    if not people_centers:
+        return None
+    center = det.get("center_xy") if isinstance(det, dict) else None
+    if not isinstance(center, (list, tuple)) or len(center) != 2:
+        return None
+    try:
+        cx = float(center[0])
+        cy = float(center[1])
+    except (TypeError, ValueError):
+        return None
+    return min(math.hypot(cx - px, cy - py) for px, py in people_centers)
+
+
+def _is_plausible_alert_detection(det: dict, frame_w: int, frame_h: int) -> bool:
+    """Filter noisy detections (tiny specks or weak drink-container guesses)."""
+    try:
+        confidence = float(det.get("confidence", 0.0))
+    except (TypeError, ValueError):
+        return False
+    class_name = str(det.get("class_name", "")).strip().lower()
+    required_confidence = ALERT_DETECTION_CONFIDENCE_FLOOR
+    if class_name in _DRINK_ALERT_CLASS_NAMES:
+        required_confidence = max(required_confidence, _DRINK_ALERT_CONFIDENCE_FLOOR)
+    if confidence < required_confidence:
+        return False
+    return _detection_area_ratio(det, frame_w, frame_h) >= _ALERT_MIN_BOX_AREA_RATIO
+
+
+def _select_primary_alert_detections(
+    alert_detections: list[dict],
+    person_detections: list[dict],
+    frame_shape,
+) -> list[dict]:
+    """Pick one primary detection per alert so accept/reject actions stay atomic."""
+    if not alert_detections:
+        return []
+    frame_h = int(frame_shape[0]) if len(frame_shape) >= 1 else 0
+    frame_w = int(frame_shape[1]) if len(frame_shape) >= 2 else 0
+    if frame_w <= 1 or frame_h <= 1:
+        return [alert_detections[0]]
+
+    people_centers = _person_centers(person_detections)
+    plausible = [
+        det for det in alert_detections if _is_plausible_alert_detection(det, frame_w, frame_h)
+    ]
+    candidates = plausible or list(alert_detections)
+    frame_diag = max(1.0, math.hypot(float(frame_w), float(frame_h)))
+
+    def _score(det: dict) -> float:
+        try:
+            confidence = float(det.get("confidence", 0.0))
+        except (TypeError, ValueError):
+            confidence = 0.0
+        area_bonus = min(0.2, _detection_area_ratio(det, frame_w, frame_h) * 20.0)
+        nearest_person = _detection_min_person_distance(det, people_centers)
+        if nearest_person is None:
+            proximity_bonus = 0.0
+        else:
+            proximity_bonus = max(0.0, 0.18 - ((nearest_person / frame_diag) * 0.5))
+        return confidence + area_bonus + proximity_bonus
+
+    best = max(candidates, key=_score)
+    return [best]
+
+
 def _persist_alert_synchronously(config, payload: dict):
     """Compatibility path: persist one alert inline when no alert queue is configured."""
     alert = create_alert(
@@ -432,6 +533,9 @@ def camera_worker(config, cam_index: int):
                 time.sleep(0.1)
                 continue
 
+            # Cameras are physically mounted upside down; rotate before detection and streaming.
+            frame = cv2.flip(frame, -1)
+
             recent_frames.append(frame.copy())
 
             detections = last_detections
@@ -442,6 +546,7 @@ def camera_worker(config, cam_index: int):
             hand_to_mouth_event_active = False
             all_detections = detections
             alert_detections: list[dict] = []
+            primary_alert_detections: list[dict] = []
             visible_food_detections: list[dict] = []
             person_detections: list[dict] = []
             if detection_enabled:
@@ -509,6 +614,11 @@ def camera_worker(config, cam_index: int):
                         for det in all_detections
                         if str(det.get("class_name", "")).strip().lower() == "person"
                     ]
+                    primary_alert_detections = _select_primary_alert_detections(
+                        alert_detections,
+                        person_detections,
+                        frame.shape,
+                    )
                     if motion_enabled:
                         raw_motion_detected, raw_motion_score = detect_consumption_motion(
                             config,
@@ -604,7 +714,7 @@ def camera_worker(config, cam_index: int):
                 motion_score = 0.0
 
             # This debounce logic makes "item stays in view" produce one alert rather than many.
-            if detection_enabled and inference_ran and alert_detections:
+            if detection_enabled and inference_ran and primary_alert_detections:
                 config.consecutive += 1
                 config.clear_count = 0
             elif detection_enabled and inference_ran:
@@ -632,7 +742,7 @@ def camera_worker(config, cam_index: int):
             )
             stationary_followup_trigger = (
                 inference_ran
-                and bool(alert_detections)
+                and bool(primary_alert_detections)
                 and not motion_detected
                 and config.stationary_first_alert_ts > 0.0
                 and not config.stationary_followup_sent
@@ -640,7 +750,7 @@ def camera_worker(config, cam_index: int):
             )
             initial_trigger = (
                 inference_ran
-                and alert_detections
+                and primary_alert_detections
                 and config.consecutive >= max(1, persist_frames)
                 and config.armed
                 and (wall_now - config.last_alert_ts) >= max(0.0, cooldown)
@@ -648,18 +758,18 @@ def camera_worker(config, cam_index: int):
             frame_diag = math.hypot(float(frame.shape[1]), float(frame.shape[0]))
             new_object_trigger = (
                 inference_ran
-                and bool(alert_detections)
+                and bool(primary_alert_detections)
                 and (wall_now - config.last_alert_ts) >= NEW_OBJECT_MIN_ALERT_GAP_SECONDS
                 and has_novel_alert_object(
                     config,
-                    alert_detections,
+                    primary_alert_detections,
                     frame_diag=frame_diag,
                     now_ts=wall_now,
                 )
             )
 
             same_person_suppressed = False
-            alert_person_center = select_alert_person_center(person_detections, alert_detections)
+            alert_person_center = select_alert_person_center(person_detections, primary_alert_detections)
             same_person_suppressed = _is_same_person_suppressed(
                 config,
                 alert_person_center,
@@ -680,7 +790,7 @@ def camera_worker(config, cam_index: int):
                 elif stationary_followup_trigger:
                     reason = "stationary_followup"
 
-                payload_detections = deepcopy(alert_detections)
+                payload_detections = deepcopy(primary_alert_detections)
                 if hand_to_mouth_event_active:
                     has_snippet_candidate = any(
                         float(det.get("confidence", 0.0)) >= ALERT_SNIPPET_CONFIDENCE_FLOOR
@@ -721,7 +831,7 @@ def camera_worker(config, cam_index: int):
                 if not _enqueue_alert_job(config, alert_payload):
                     _persist_alert_synchronously(config, alert_payload)
                 config.last_alert_ts = wall_now
-                remember_alert_objects(config, alert_detections, wall_now)
+                remember_alert_objects(config, primary_alert_detections, wall_now)
                 if alert_person_center is not None:
                     config.person_alert_history.append(
                         (

@@ -175,6 +175,8 @@ class CameraPreview:
                 if not ok:
                     self._publish_status(f"Camera {self.camera_index} reconnecting")
                     break
+                # Cameras are physically mounted upside down; rotate before preview inference/streaming.
+                frame = cv2.flip(frame, -1)
                 detections = last_detections
                 settings = self._manager.detection_settings_snapshot()
                 if settings["enabled"]:

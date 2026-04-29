@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -16,6 +17,11 @@ try:
     import cv2
 except Exception:
     cv2 = None
+
+try:
+    import numpy as np
+except Exception:
+    np = None
 
 try:
     from ultralytics import YOLO
@@ -43,6 +49,7 @@ from dfx.training import (
 from dfx.constants import FOOD_CLASS_NAMES
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
+_MAX_JSON_BODY_BYTES = 8_000_000
 
 
 def _load_html_page() -> str:
@@ -166,7 +173,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             content_length = 0
         if content_length <= 0:
             raise ValueError("Missing request body")
-        raw = self.rfile.read(min(content_length, 1_000_000))
+        if content_length > _MAX_JSON_BODY_BYTES:
+            raise ValueError("Request body too large")
+        raw = self.rfile.read(content_length)
         try:
             return json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError):
@@ -770,10 +779,33 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND, str(exc))
             return
 
-        frame = source["frame"]
+        frame = None
+        snapshot_data_url = str(payload.get("snapshot_data_url", "")).strip()
+        if snapshot_data_url:
+            if np is None:
+                self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "NumPy not available")
+                return
+            try:
+                encoded = snapshot_data_url
+                if snapshot_data_url.startswith("data:"):
+                    _, _, encoded = snapshot_data_url.partition(",")
+                snapshot_bytes = base64.b64decode(encoded, validate=True)
+                buffer = np.frombuffer(snapshot_bytes, dtype=np.uint8)
+                decoded = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+                if decoded is None:
+                    raise ValueError("Could not decode snapshot")
+                frame = decoded
+            except Exception:
+                self.send_error(HTTPStatus.BAD_REQUEST, "Invalid snapshot_data_url")
+                return
+
         if frame is None:
-            self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No frame available")
-            return
+            live_frame = source["frame"]
+            if live_frame is None:
+                self.send_error(HTTPStatus.SERVICE_UNAVAILABLE, "No frame available")
+                return
+            frame = live_frame
+
         frame = frame.copy()
         h, w = frame.shape[:2]
 

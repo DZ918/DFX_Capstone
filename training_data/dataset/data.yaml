@@ -1,6 +1,6 @@
 path: /home/user/DFX_Capstone/training_data/dataset
-train: images
-val: images
+train: images/train
+val: images/val
 names:
   0: bottle
   1: donut
@@ -9,3 +9,5 @@ names:
   4: cup
   5: pizza
   6: hand_to_mouth
+  7: soda_can
+  8: snacks

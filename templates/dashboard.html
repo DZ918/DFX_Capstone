@@ -542,6 +542,10 @@
         background: #020617;
         display: grid;
         gap: 12px;
+        max-height: calc(92vh - 54px);
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        -webkit-overflow-scrolling: touch;
       }
       .stale-alert-list {
         display: grid;
@@ -910,6 +914,30 @@
         return `<div class="det-card">${snippet}<div class="det-label">${className} (${confidence})</div></div>`;
       }
 
+      function renderAlertRecording(alert) {
+        const recordingFile = alert.video_file ? String(alert.video_file) : '';
+        const recordingMime = String(alert.video_mime || '').trim();
+        const recordingLower = recordingFile.toLowerCase();
+        const recordingUrl = recordingFile ? `/videos/${encodeURIComponent(recordingFile)}` : '';
+        const recordingIsImage =
+          recordingLower.endsWith('.gif') ||
+          recordingLower.endsWith('.webp') ||
+          recordingMime.toLowerCase().startsWith('image/');
+        if (!recordingFile) {
+          return '';
+        }
+        return `<div class="alert-video-wrap">` +
+          (recordingIsImage
+            ? `<img class="alert-video" src="${recordingUrl}" alt="Attached motion clip" loading="lazy" />`
+            : `<video class="alert-video" controls preload="metadata" playsinline>` +
+                `<source src="${recordingUrl}"${recordingMime ? ` type="${escapeHtml(recordingMime)}"` : ''} />` +
+                `Your browser cannot play this recording.` +
+              `</video>`
+          ) +
+          `<div class="det-label"><a href="${recordingUrl}" target="_blank" rel="noopener">Open/download recording</a></div>` +
+        `</div>`;
+      }
+
       // The lightbox keeps the alert list compact while still allowing full-size inspection.
       function setupLightbox() {
         const lightbox = document.getElementById('lightbox');
@@ -1116,6 +1144,10 @@
         const summary = detections.length > 0
           ? detections.slice(0, 3).map((det) => det.class_name || 'item').join(', ')
           : 'landmark-only hand-to-mouth event';
+        const video = renderAlertRecording(alert);
+        const details = detections.length > 0
+          ? `<div class="det-grid">${detections.map(renderDetection).join('')}</div>`
+          : `<div class="empty-note">No object crop was attached to this alert.</div>`;
         const item = document.createElement('article');
         item.className = 'stale-alert-item';
         item.innerHTML =
@@ -1127,6 +1159,8 @@
             `<span class="badge status-new">Pending</span>` +
           `</div>` +
           `<div class="stale-alert-meta">Source: ${escapeHtml(String(alert.hand_to_mouth_source || 'standard').replaceAll('_', ' '))}</div>` +
+          video +
+          details +
           `<div class="stale-alert-actions">` +
             `<button type="button" data-action="accept">Accept</button>` +
             `<button type="button" data-action="reject" class="reject">Reject</button>` +
@@ -1694,26 +1728,7 @@
                     ? ` | events/30s: ${Number(alert.hand_to_mouth_event_count || 0)}`
                     : '';
         const zoneTag = zone ? ` | ${zone}` : '';
-        const recordingFile = alert.video_file ? String(alert.video_file) : '';
-        const recordingMime = String(alert.video_mime || '').trim();
-        const recordingLower = recordingFile.toLowerCase();
-        const recordingUrl = recordingFile ? `/videos/${encodeURIComponent(recordingFile)}` : '';
-        const recordingIsImage =
-          recordingLower.endsWith('.gif') ||
-          recordingLower.endsWith('.webp') ||
-          recordingMime.toLowerCase().startsWith('image/');
-        const video = recordingFile
-          ? `<div class="alert-video-wrap">` +
-              (recordingIsImage
-                ? `<img class="alert-video" src="${recordingUrl}" alt="Attached motion clip" loading="lazy" />`
-                : `<video class="alert-video" controls preload="metadata" playsinline>` +
-                    `<source src="${recordingUrl}"${recordingMime ? ` type="${escapeHtml(recordingMime)}"` : ''} />` +
-                    `Your browser cannot play this recording.` +
-                  `</video>`
-              ) +
-              `<div class="det-label"><a href="${recordingUrl}" target="_blank" rel="noopener">Open/download recording</a></div>` +
-            `</div>`
-          : '';
+        const video = renderAlertRecording(alert);
         const details = detections.length > 0
           ? `<div class="det-grid">${detections.map(renderDetection).join('')}</div>`
           : `<div class="empty-note">No object crop was attached to this alert. Review the hand-to-mouth motion metadata and recording.</div>`;
@@ -1894,6 +1909,18 @@
         let boxDrawn = false;
         let annotationCameraIndex = null;
         let annotationCameraLabel = 'Primary feed';
+        let snapshotPayload = '';
+        let snapshotPayloadReady = false;
+        let snapshotObjectUrl = '';
+
+        function blobToDataUrl(blob) {
+          return new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result || ''));
+            reader.onerror = () => reject(new Error('Could not encode snapshot'));
+            reader.readAsDataURL(blob);
+          });
+        }
 
         function openModal() {
           modal.classList.add('open');
@@ -1909,18 +1936,38 @@
           annotationCameraIndex = cameraIndex;
           annotationCameraLabel = cameraLabel;
           titleEl.textContent = `Annotate ${cameraLabel}`;
+          snapshotPayload = '';
+          snapshotPayloadReady = false;
+          if (snapshotObjectUrl) {
+            URL.revokeObjectURL(snapshotObjectUrl);
+            snapshotObjectUrl = '';
+          }
           openModal();
           statusEl.textContent = 'Loading snapshot...';
           Promise.all([
             fetch(cameraIndex === null ? '/snapshot' : `/snapshot?camera=${encodeURIComponent(cameraIndex)}`).then(r => { if (!r.ok) throw new Error('No frame'); return r.blob(); }),
             fetch('/classes').then(r => r.json())
           ]).then(([blob, classes]) => {
+            blobToDataUrl(blob)
+              .then((dataUrl) => {
+                snapshotPayload = dataUrl;
+                snapshotPayloadReady = true;
+              })
+              .catch(() => {
+                snapshotPayload = '';
+                snapshotPayloadReady = false;
+              });
+
             const img = new Image();
             img.onload = function() {
               snapshotImg = img;
               canvas.width = img.naturalWidth;
               canvas.height = img.naturalHeight;
               ctx.drawImage(img, 0, 0);
+              if (snapshotObjectUrl) {
+                URL.revokeObjectURL(snapshotObjectUrl);
+                snapshotObjectUrl = '';
+              }
               boxDrawn = false;
               statusEl.textContent = 'Draw a box around the item.';
               // Populate class dropdown
@@ -1933,7 +1980,8 @@
               });
               customInput.value = '';
             };
-            img.src = URL.createObjectURL(blob);
+            snapshotObjectUrl = URL.createObjectURL(blob);
+            img.src = snapshotObjectUrl;
           }).catch(err => {
             statusEl.textContent = 'Could not capture frame: ' + err.message;
           });
@@ -1945,6 +1993,12 @@
           snapshotImg = null;
           boxDrawn = false;
           drawing = false;
+          snapshotPayload = '';
+          snapshotPayloadReady = false;
+          if (snapshotObjectUrl) {
+            URL.revokeObjectURL(snapshotObjectUrl);
+            snapshotObjectUrl = '';
+          }
           annotationCameraIndex = null;
           annotationCameraLabel = 'Primary feed';
         }
@@ -2062,6 +2116,10 @@
             statusEl.textContent = 'Please draw a box first.';
             return;
           }
+          if (!snapshotPayloadReady || !snapshotPayload) {
+            statusEl.textContent = 'Snapshot is still loading. Please wait a moment.';
+            return;
+          }
           const x1 = Math.min(startX, endX) / canvas.width;
           const y1 = Math.min(startY, endY) / canvas.height;
           const x2 = Math.max(startX, endX) / canvas.width;
@@ -2075,6 +2133,7 @@
                 bbox: [x1, y1, x2, y2],
                 class_name: className,
                 camera_index: annotationCameraIndex,
+                snapshot_data_url: snapshotPayload,
               })
             });
             const data = await res.json();

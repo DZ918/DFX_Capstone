@@ -59,7 +59,7 @@ case "$MODE" in
 				--model "$DASHBOARD_MODEL_PATH" \
 				--conf "$DASHBOARD_CONFIDENCE" \
 				--inference-imgsz 320 \
-				--max-inference-fps 4 \
+				--max-inference-fps 0 \
 					--fps 30 \
 				--jpeg-quality 65 \
 					"$MOTION_FLAG" \
