@@ -1,4 +1,4 @@
-path: /home/user/DFX_Capstone/training_data/dataset
+path: /mnt/nvme/DFX_Capstone/training_data/dataset
 train: images
 val: images
 names:

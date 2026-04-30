@@ -11,7 +11,7 @@ try:
 except Exception:
     cv2 = None
 
-from dfx.camera import _open_camera_capture
+from dfx.camera import _open_camera_capture_with_fallback
 from dfx.detection import (
     detections_from_result,
     draw_detections,
@@ -149,6 +149,10 @@ class CameraPreview:
         reconnect_delay = 1.0
         last_detections: list[dict] = []
         next_inference_at = 0.0
+        last_open_failure_summary = ""
+        last_open_failure_logged_at = 0.0
+        last_open_success_source = ""
+        last_read_failure_logged_at = 0.0
         self._publish_status("Connecting...")
         while not self._stop_event.is_set():
             if cv2 is None:
@@ -156,16 +160,44 @@ class CameraPreview:
                 self._stop_event.wait(timeout=reconnect_delay)
                 continue
 
-            cap = _open_camera_capture(self.camera_index)
+            with self._settings_lock:
+                open_width = int(self._width)
+                open_height = int(self._height)
+                open_fps = float(self._stream_fps)
+
+            cap, source_label, diagnostics = _open_camera_capture_with_fallback(
+                self.camera_index,
+                width=open_width,
+                height=open_height,
+                stream_fps=open_fps,
+            )
             if cap is None:
+                summary = diagnostics[-1] if diagnostics else f"Camera {self.camera_index} unavailable"
+                now_ts = time.time()
+                if (
+                    summary != last_open_failure_summary
+                    or (now_ts - last_open_failure_logged_at) >= 8.0
+                ):
+                    logger.warning(
+                        "Preview camera %s failed to open. Last attempt: %s",
+                        self.camera_index,
+                        summary,
+                    )
+                    for detail in diagnostics:
+                        logger.warning(
+                            "Preview camera %s open detail: %s",
+                            self.camera_index,
+                            detail,
+                        )
+                    last_open_failure_summary = summary
+                    last_open_failure_logged_at = now_ts
                 self._publish_status(f"Camera {self.camera_index} unavailable")
                 self._stop_event.wait(timeout=reconnect_delay)
                 continue
-            if not cap.isOpened():
-                cap.release()
-                self._publish_status(f"Camera {self.camera_index} unavailable")
-                self._stop_event.wait(timeout=reconnect_delay)
-                continue
+
+            if source_label != last_open_success_source:
+                logger.info("Preview camera %s opened via %s", self.camera_index, source_label)
+                last_open_success_source = source_label
 
             self._set_state(self.get_jpeg(), available=True, error="", frame=None)
 
@@ -173,6 +205,10 @@ class CameraPreview:
                 loop_started_at = time.perf_counter()
                 ok, frame = cap.read()
                 if not ok:
+                    now_ts = time.time()
+                    if (now_ts - last_read_failure_logged_at) >= 5.0:
+                        logger.warning("Preview camera %s read failed, reconnecting", self.camera_index)
+                        last_read_failure_logged_at = now_ts
                     self._publish_status(f"Camera {self.camera_index} reconnecting")
                     break
                 # Cameras are physically mounted upside down; rotate before preview inference/streaming.

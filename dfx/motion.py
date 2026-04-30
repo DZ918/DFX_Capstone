@@ -39,22 +39,23 @@ from dfx.constants import (
     HAND_MOUTH_MAX_TRACK_GAP_SECONDS,
     HAND_MOUTH_MIN_DIRECTION_COSINE,
     HAND_MOUTH_MIN_APPROACH_DELTA_RATIO,
+    HAND_MOUTH_MIN_BBOX_SCALE_PX,
     HAND_MOUTH_MIN_DWELL_SECONDS,
-    HAND_MOUTH_MIN_FACE_WIDTH_PX,
     HAND_MOUTH_MIN_PERSON_AREA_RATIO,
     HAND_MOUTH_MIN_PERSON_CONFIDENCE,
+    HAND_MOUTH_MIN_WRIST_UPWARD_RATIO,
+    HAND_MOUTH_MIN_WRIST_UPWARD_STEPS,
     HAND_MOUTH_PERSON_CROP_MARGIN_RATIO,
     HAND_MOUTH_SCORE_FLOOR,
+    HAND_MOUTH_WRIST_UPWARD_HISTORY_SECONDS,
     HANDHELD_FOOD_CLASS_NAMES,
     MOTION_TRIGGER_SCORE,
 )
 
 logger = logging.getLogger(__name__)
 
-_FACE_LIP_CENTER_INDICES = (13, 14, 78, 308)
-_FACE_LIP_CORNER_INDICES = (61, 291)
-_FACE_WIDTH_INDICES = (234, 454)
-_INDEX_FINGER_TIP_INDEX = 8
+_POSE_MOUTH_INDICES = (9, 10)
+_POSE_WRIST_INDICES = (15, 16)
 
 
 def _extract_detection_geometry(det: dict) -> tuple[float, float, float] | None:
@@ -144,8 +145,30 @@ def reset_person_hand_to_mouth_state(config):
     config.person_proxy_last_seen_ts = 0.0
     config.person_proxy_last_approach_ts = 0.0
     config.person_proxy_last_distance_ratio = float("inf")
+    config.person_proxy_subject_bbox = None
+    config.person_proxy_last_wrist_xy = None
     config.person_proxy_last_finger_xy = None
     config.person_proxy_last_mouth_xy = None
+    config.person_proxy_wrist_history = deque(maxlen=16)
+
+
+def _current_hand_mouth_subject(config):
+    """Return the latest proxy subject geometry used by camera-level person tracking."""
+    subject_bbox = getattr(config, "person_proxy_subject_bbox", None)
+    wrist_xy = getattr(config, "person_proxy_last_wrist_xy", None)
+    if wrist_xy is None:
+        wrist_xy = getattr(config, "person_proxy_last_finger_xy", None)
+    mouth_xy = getattr(config, "person_proxy_last_mouth_xy", None)
+    if subject_bbox is None and wrist_xy is None and mouth_xy is None:
+        return None
+    payload: dict[str, object] = {}
+    if isinstance(subject_bbox, (list, tuple)) and len(subject_bbox) == 4:
+        payload["subject_bbox_xyxy"] = [float(v) for v in subject_bbox]
+    if isinstance(wrist_xy, (list, tuple)) and len(wrist_xy) == 2:
+        payload["wrist_xy"] = [float(wrist_xy[0]), float(wrist_xy[1])]
+    if isinstance(mouth_xy, (list, tuple)) and len(mouth_xy) == 2:
+        payload["mouth_xy"] = [float(mouth_xy[0]), float(mouth_xy[1])]
+    return payload or None
 
 
 def _get_hand_mouth_detector(config):
@@ -207,11 +230,11 @@ def _suppress_native_stderr():
             devnull.close()
 
 
-def _current_hand_mouth_output(config, now_ts: float) -> tuple[bool, float]:
+def _current_hand_mouth_output(config, now_ts: float) -> tuple[bool, float, dict | None]:
     """Return the currently active strict hand-to-mouth state and score."""
     active_until = float(getattr(config, "person_proxy_active_until", 0.0))
     active = active_until > 0.0 and now_ts <= active_until
-    return active, (round(HAND_MOUTH_SCORE_FLOOR, 3) if active else 0.0)
+    return active, (round(HAND_MOUTH_SCORE_FLOOR, 3) if active else 0.0), _current_hand_mouth_subject(config)
 
 
 def _reset_hand_mouth_candidate(config):
@@ -220,11 +243,14 @@ def _reset_hand_mouth_candidate(config):
     config.person_proxy_last_seen_ts = 0.0
     config.person_proxy_last_approach_ts = 0.0
     config.person_proxy_last_distance_ratio = float("inf")
+    config.person_proxy_subject_bbox = None
+    config.person_proxy_last_wrist_xy = None
     config.person_proxy_last_finger_xy = None
     config.person_proxy_last_mouth_xy = None
+    config.person_proxy_wrist_history = deque(maxlen=16)
 
 
-def _handle_hand_mouth_gap(config, now_ts: float) -> tuple[bool, float]:
+def _handle_hand_mouth_gap(config, now_ts: float) -> tuple[bool, float, dict | None]:
     """Gracefully expire proximity state after landmark loss or missing detections."""
     last_seen_ts = float(getattr(config, "person_proxy_last_seen_ts", 0.0))
     if last_seen_ts <= 0.0 or (now_ts - last_seen_ts) > HAND_MOUTH_MAX_TRACK_GAP_SECONDS:
@@ -386,7 +412,15 @@ def _prepare_hand_mouth_input(frame, crop_bounds: tuple[int, int, int, int]):
     }
 
 
-def _hand_mouth_score(distance_ratio: float, dwell_elapsed: float, approach_delta_ratio: float, direction_cosine: float, active: bool) -> float:
+def _hand_mouth_score(
+    distance_ratio: float,
+    dwell_elapsed: float,
+    approach_delta_ratio: float,
+    direction_cosine: float,
+    wrist_upward_ratio: float,
+    velocity_ready: bool,
+    active: bool,
+) -> float:
     """Convert strict landmark geometry into a bounded score used by the alert pipeline."""
     proximity_score = max(0.0, 1.0 - (distance_ratio / max(1e-6, HAND_MOUTH_MAX_DISTANCE_RATIO)))
     dwell_score = min(1.0, dwell_elapsed / max(1e-6, HAND_MOUTH_MIN_DWELL_SECONDS))
@@ -409,29 +443,67 @@ def _hand_mouth_score(distance_ratio: float, dwell_elapsed: float, approach_delt
                 / max(1e-6, 1.0 - HAND_MOUTH_MIN_DIRECTION_COSINE),
             ),
         )
+    upward_score = min(
+        1.0,
+        max(0.0, wrist_upward_ratio / max(1e-6, HAND_MOUTH_MIN_WRIST_UPWARD_RATIO)),
+    )
+    if velocity_ready:
+        upward_score = max(upward_score, 1.0)
 
     very_close = distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 0.55)
     if very_close:
-        proximity_weight = 0.68
-        dwell_weight = 0.24
+        proximity_weight = 0.58
+        dwell_weight = 0.20
         approach_weight = 0.05
         direction_weight = 0.03
+        upward_weight = 0.14
     else:
-        proximity_weight = 0.52
-        dwell_weight = 0.28
+        proximity_weight = 0.42
+        dwell_weight = 0.25
         approach_weight = 0.12
-        direction_weight = 0.08
+        direction_weight = 0.09
+        upward_weight = 0.12
 
     raw_score = (
         (proximity_weight * proximity_score)
         + (dwell_weight * dwell_score)
         + (approach_weight * approach_score)
         + (direction_weight * direction_score)
+        + (upward_weight * upward_score)
     )
     score = min(1.5, max(0.0, raw_score * 1.45))
+    if not velocity_ready and not active:
+        score *= 0.72
     if active:
         score = max(score, HAND_MOUTH_SCORE_FLOOR)
     return round(score, 3)
+
+
+def _wrist_upward_stats(config, wrist_xy, now_ts: float, person_height_px: float) -> tuple[float, int, bool]:
+    """Track short-term wrist Y movement and require upward motion before triggering."""
+    history = getattr(config, "person_proxy_wrist_history", None)
+    if not isinstance(history, deque):
+        history = deque(maxlen=16)
+        config.person_proxy_wrist_history = history
+    history.append((float(now_ts), float(wrist_xy[0]), float(wrist_xy[1])))
+    while history and (now_ts - float(history[0][0])) > HAND_MOUTH_WRIST_UPWARD_HISTORY_SECONDS:
+        history.popleft()
+    if len(history) < 2:
+        return 0.0, 0, False
+
+    history_points = list(history)
+    upward_pixels = float(history_points[0][2]) - float(history_points[-1][2])
+    upward_ratio = upward_pixels / max(1.0, float(person_height_px))
+    upward_steps = sum(
+        1
+        for prev, cur in zip(history_points, history_points[1:])
+        if (float(prev[2]) - float(cur[2])) > 1.0
+    )
+    velocity_ready = (
+        upward_ratio >= HAND_MOUTH_MIN_WRIST_UPWARD_RATIO
+        and upward_steps >= HAND_MOUTH_MIN_WRIST_UPWARD_STEPS
+    )
+    return upward_ratio, upward_steps, velocity_ready
 
 
 def _score_person_proximity(
@@ -666,10 +738,10 @@ def detect_person_hand_to_mouth_proxy(
     frame,
     person_detections: list[dict],
     now_ts: float,
-) -> tuple[bool, float]:
-    """Strict hand-to-mouth signal from index-finger and lip landmark proximity."""
+) -> tuple[bool, float, dict | None]:
+    """Strict hand-to-mouth signal from pose wrists-to-mouth 2D proximity."""
     if cv2 is None or np is None:
-        return False, 0.0
+        return False, 0.0, None
 
     detector = _get_hand_mouth_detector(config)
     if detector is None:
@@ -685,6 +757,9 @@ def detect_person_hand_to_mouth_proxy(
 
     crop_left = int(prepared_input["crop_left"])
     crop_top = int(prepared_input["crop_top"])
+    crop_right = int(person_crop[2])
+    crop_bottom = int(person_crop[3])
+    config.person_proxy_subject_bbox = [crop_left, crop_top, crop_right, crop_bottom]
     pad_x = int(prepared_input["pad_x"])
     pad_y = int(prepared_input["pad_y"])
     input_frame = prepared_input["frame"]
@@ -698,18 +773,14 @@ def detect_person_hand_to_mouth_proxy(
         config.person_proxy_detector_quiet_frames = quiet_frames - 1
     else:
         results = detector.process(rgb)
-    face_landmarks = getattr(results, "face_landmarks", None)
-    hand_landmarks = [
-        getattr(results, "left_hand_landmarks", None),
-        getattr(results, "right_hand_landmarks", None),
-    ]
-    hand_landmarks = [landmarks for landmarks in hand_landmarks if landmarks is not None]
-    if face_landmarks is None or not hand_landmarks:
+
+    pose_landmarks = getattr(results, "pose_landmarks", None)
+    if pose_landmarks is None:
         return _handle_hand_mouth_gap(config, now_ts)
 
     mouth_center = _mean_landmark_xy(
-        face_landmarks,
-        _FACE_LIP_CENTER_INDICES,
+        pose_landmarks,
+        _POSE_MOUTH_INDICES,
         crop_left,
         crop_top,
         input_w,
@@ -717,114 +788,95 @@ def detect_person_hand_to_mouth_proxy(
         pad_x,
         pad_y,
     )
-    mouth_left = _safe_landmark_xy(
-        face_landmarks,
-        _FACE_LIP_CORNER_INDICES[0],
-        crop_left,
-        crop_top,
-        input_w,
-        input_h,
-        pad_x,
-        pad_y,
-    )
-    mouth_right = _safe_landmark_xy(
-        face_landmarks,
-        _FACE_LIP_CORNER_INDICES[1],
-        crop_left,
-        crop_top,
-        input_w,
-        input_h,
-        pad_x,
-        pad_y,
-    )
-    face_left = _safe_landmark_xy(
-        face_landmarks,
-        _FACE_WIDTH_INDICES[0],
-        crop_left,
-        crop_top,
-        input_w,
-        input_h,
-        pad_x,
-        pad_y,
-    )
-    face_right = _safe_landmark_xy(
-        face_landmarks,
-        _FACE_WIDTH_INDICES[1],
-        crop_left,
-        crop_top,
-        input_w,
-        input_h,
-        pad_x,
-        pad_y,
-    )
-    if mouth_center is None or mouth_left is None or mouth_right is None:
+    if mouth_center is None:
         return _handle_hand_mouth_gap(config, now_ts)
 
-    mouth_width = _distance(mouth_left, mouth_right)
-    face_width = 0.0
-    if face_left is not None and face_right is not None:
-        face_width = _distance(face_left, face_right)
-    face_width = max(face_width, mouth_width * 2.8)
-    if face_width < HAND_MOUTH_MIN_FACE_WIDTH_PX:
+    person_width = max(1.0, float(crop_right - crop_left))
+    person_height = max(1.0, float(crop_bottom - crop_top))
+    person_scale = max(HAND_MOUTH_MIN_BBOX_SCALE_PX, math.sqrt(person_width * person_height))
+    if person_scale < HAND_MOUTH_MIN_BBOX_SCALE_PX:
         return _handle_hand_mouth_gap(config, now_ts)
 
-    closest_finger_xy = None
-    closest_distance_ratio = float("inf")
-    for landmarks in hand_landmarks:
-        finger_xy = _safe_landmark_xy(
-            landmarks,
-            _INDEX_FINGER_TIP_INDEX,
+    wrist_candidates = [
+        _safe_landmark_xy(
+            pose_landmarks,
+            _POSE_WRIST_INDICES[0],
             crop_left,
             crop_top,
             input_w,
             input_h,
             pad_x,
             pad_y,
-        )
-        if finger_xy is None:
-            continue
-        distance_ratio = _distance(finger_xy, mouth_center) / max(1.0, face_width)
-        if distance_ratio < closest_distance_ratio:
-            closest_distance_ratio = distance_ratio
-            closest_finger_xy = finger_xy
-    if closest_finger_xy is None:
+        ),
+        _safe_landmark_xy(
+            pose_landmarks,
+            _POSE_WRIST_INDICES[1],
+            crop_left,
+            crop_top,
+            input_w,
+            input_h,
+            pad_x,
+            pad_y,
+        ),
+    ]
+    wrist_candidates = [candidate for candidate in wrist_candidates if candidate is not None]
+    if not wrist_candidates:
         return _handle_hand_mouth_gap(config, now_ts)
 
-    previous_finger_xy = getattr(config, "person_proxy_last_finger_xy", None)
+    closest_wrist_xy = None
+    closest_distance_ratio = float("inf")
+    for wrist_xy in wrist_candidates:
+        distance_ratio = _distance(wrist_xy, mouth_center) / max(1.0, person_scale)
+        if distance_ratio < closest_distance_ratio:
+            closest_distance_ratio = distance_ratio
+            closest_wrist_xy = wrist_xy
+    if closest_wrist_xy is None:
+        return _handle_hand_mouth_gap(config, now_ts)
+
+    previous_wrist_xy = getattr(config, "person_proxy_last_wrist_xy", None)
+    if previous_wrist_xy is None:
+        previous_wrist_xy = getattr(config, "person_proxy_last_finger_xy", None)
     previous_mouth_xy = getattr(config, "person_proxy_last_mouth_xy", None)
     smooth_alpha = float(getattr(config, "person_proxy_landmark_ema_alpha", HAND_MOUTH_LANDMARK_EMA_ALPHA))
     mouth_center = _ema_point(previous_mouth_xy, mouth_center, smooth_alpha)
-    closest_finger_xy = _ema_point(previous_finger_xy, closest_finger_xy, smooth_alpha)
-    if mouth_center is None or closest_finger_xy is None:
+    closest_wrist_xy = _ema_point(previous_wrist_xy, closest_wrist_xy, smooth_alpha)
+    if mouth_center is None or closest_wrist_xy is None:
         return _handle_hand_mouth_gap(config, now_ts)
 
-    closest_distance_ratio = _distance(closest_finger_xy, mouth_center) / max(1.0, face_width)
+    closest_distance_ratio = _distance(closest_wrist_xy, mouth_center) / max(1.0, person_scale)
     previous_distance_ratio = float(getattr(config, "person_proxy_last_distance_ratio", float("inf")))
     approach_delta_ratio = 0.0
     direction_cosine = 0.0
     if math.isfinite(previous_distance_ratio):
         approach_delta_ratio = max(0.0, previous_distance_ratio - closest_distance_ratio)
-    if previous_finger_xy is not None:
+    if previous_wrist_xy is not None:
         motion_vector = (
-            closest_finger_xy[0] - previous_finger_xy[0],
-            closest_finger_xy[1] - previous_finger_xy[1],
+            closest_wrist_xy[0] - previous_wrist_xy[0],
+            closest_wrist_xy[1] - previous_wrist_xy[1],
         )
         target_origin = previous_mouth_xy if previous_mouth_xy is not None else mouth_center
         target_vector = (
-            target_origin[0] - previous_finger_xy[0],
-            target_origin[1] - previous_finger_xy[1],
+            target_origin[0] - previous_wrist_xy[0],
+            target_origin[1] - previous_wrist_xy[1],
         )
         direction_cosine = _direction_cosine(motion_vector, target_vector)
+
+    wrist_upward_ratio, wrist_upward_steps, velocity_ready = _wrist_upward_stats(
+        config,
+        closest_wrist_xy,
+        now_ts,
+        person_height_px=person_height,
+    )
 
     trajectory_ready = (
         approach_delta_ratio >= HAND_MOUTH_MIN_APPROACH_DELTA_RATIO
         or direction_cosine >= HAND_MOUTH_MIN_DIRECTION_COSINE
     )
-    within_threshold = closest_distance_ratio <= HAND_MOUTH_MAX_DISTANCE_RATIO
-    proximity_override = closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.08)
+    proximity_override = closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.10)
     if proximity_override or (
-        closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.65)
+        closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.55)
         and trajectory_ready
+        and velocity_ready
     ):
         config.person_proxy_last_approach_ts = now_ts
 
@@ -833,17 +885,23 @@ def detect_person_hand_to_mouth_proxy(
     ) <= HAND_MOUTH_APPROACH_WINDOW_SECONDS
 
     dwell_started_at = float(getattr(config, "person_proxy_dwell_started_at", 0.0))
-    threshold_for_reset = HAND_MOUTH_MAX_DISTANCE_RATIO * (1.30 if dwell_started_at > 0.0 else 1.08)
+    threshold_for_reset = HAND_MOUTH_MAX_DISTANCE_RATIO * (1.25 if dwell_started_at > 0.0 else 1.08)
     within_or_sticky = closest_distance_ratio <= threshold_for_reset
     if within_or_sticky:
-        if dwell_started_at <= 0.0 and (recent_approach or proximity_override):
+        if dwell_started_at <= 0.0 and (recent_approach or proximity_override or velocity_ready):
             config.person_proxy_dwell_started_at = now_ts
     else:
         config.person_proxy_dwell_started_at = 0.0
 
     dwell_started_at = float(getattr(config, "person_proxy_dwell_started_at", 0.0))
     dwell_elapsed = max(0.0, now_ts - dwell_started_at) if dwell_started_at > 0.0 else 0.0
-    triggered = within_or_sticky and dwell_started_at > 0.0 and dwell_elapsed >= HAND_MOUTH_MIN_DWELL_SECONDS
+    triggered = (
+        within_or_sticky
+        and dwell_started_at > 0.0
+        and dwell_elapsed >= HAND_MOUTH_MIN_DWELL_SECONDS
+        and velocity_ready
+        and recent_approach
+    )
     if triggered:
         config.person_proxy_active_until = now_ts + HAND_MOUTH_HOLD_SECONDS
     active_until = float(getattr(config, "person_proxy_active_until", 0.0))
@@ -851,7 +909,8 @@ def detect_person_hand_to_mouth_proxy(
 
     config.person_proxy_last_seen_ts = now_ts
     config.person_proxy_last_distance_ratio = closest_distance_ratio
-    config.person_proxy_last_finger_xy = closest_finger_xy
+    config.person_proxy_last_wrist_xy = closest_wrist_xy
+    config.person_proxy_last_finger_xy = closest_wrist_xy
     config.person_proxy_last_mouth_xy = mouth_center
 
     score = _hand_mouth_score(
@@ -859,6 +918,17 @@ def detect_person_hand_to_mouth_proxy(
         dwell_elapsed=dwell_elapsed,
         approach_delta_ratio=approach_delta_ratio,
         direction_cosine=direction_cosine,
+        wrist_upward_ratio=wrist_upward_ratio,
+        velocity_ready=velocity_ready,
         active=active,
     )
-    return active, score
+    proxy_details = {
+        "subject_bbox_xyxy": [crop_left, crop_top, crop_right, crop_bottom],
+        "wrist_xy": [float(closest_wrist_xy[0]), float(closest_wrist_xy[1])],
+        "mouth_xy": [float(mouth_center[0]), float(mouth_center[1])],
+        "distance_ratio": float(closest_distance_ratio),
+        "wrist_upward_ratio": float(wrist_upward_ratio),
+        "wrist_upward_steps": int(wrist_upward_steps),
+        "velocity_ready": bool(velocity_ready),
+    }
+    return active, score, proxy_details

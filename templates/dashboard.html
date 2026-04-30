@@ -66,31 +66,11 @@
         font-size: 12px;
         color: #6b7280;
       }
-      .camera-manager-form {
-        display: flex;
-        align-items: flex-end;
-        gap: 8px;
-        flex-wrap: wrap;
-      }
-      .camera-manager-form button {
-        border: 0;
-        border-radius: 8px;
-        padding: 8px 12px;
-        font-size: 12px;
-        color: #fff;
-        background: #1f2937;
-        cursor: pointer;
-      }
-      .camera-manager-form button:disabled {
-        opacity: 0.6;
-        cursor: not-allowed;
-      }
       .camera-grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
         gap: 12px;
       }
-      .camera-preview-cards { display: contents; }
       .camera-panel {
         display: grid;
         gap: 10px;
@@ -100,7 +80,6 @@
         padding: 10px;
         background: #f8fafc;
       }
-      .camera-panel.primary-panel { background: #fff; }
       .camera-panel-empty {
         align-content: center;
         min-height: 120px;
@@ -152,16 +131,6 @@
         background: #e5e7eb;
         color: #374151;
       }
-      .camera-remove-btn {
-        border: 0;
-        border-radius: 8px;
-        padding: 6px 10px;
-        font-size: 12px;
-        color: #fff;
-        background: #991b1b;
-        cursor: pointer;
-      }
-      .camera-remove-btn:hover { background: #7f1d1d; }
       .camera-action-btn {
         border: 0;
         border-radius: 8px;
@@ -187,6 +156,7 @@
         justify-content: space-between;
         gap: 10px;
         margin-bottom: 10px;
+        flex-wrap: wrap;
       }
       .alerts-toolbar label {
         display: flex;
@@ -194,6 +164,18 @@
         gap: 8px;
         font-size: 12px;
         color: #374151;
+      }
+      .table-clear-btn {
+        border: 0;
+        border-radius: 8px;
+        padding: 6px 10px;
+        font-size: 12px;
+        color: #fff;
+        background: #7f1d1d;
+        cursor: pointer;
+      }
+      .table-clear-btn:hover {
+        background: #5f1717;
       }
             .backend-stats {
                 border: 1px solid var(--border);
@@ -322,11 +304,20 @@
         display: grid;
         gap: 10px;
       }
+      .settings-toggle-row {
+        display: flex;
+        align-items: center;
+        gap: 18px;
+        flex-wrap: wrap;
+        padding: 4px 0 8px;
+        border-bottom: 1px solid var(--border);
+      }
       .settings-row {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 8px;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+        gap: 10px;
       }
+      .settings-row > * { min-width: 0; }
       .settings-field {
         display: grid;
         gap: 4px;
@@ -597,7 +588,6 @@
       }
       @media (max-width: 600px) {
         .camera-toolbar { align-items: stretch; }
-        .camera-manager-form { width: 100%; }
         .settings-row { grid-template-columns: 1fr; }
         .alerts-scroll { height: 58vh; }
       }
@@ -616,14 +606,20 @@
       <section id="settingsCard" class="card settings-card hidden">
         <h2>Runtime Settings</h2>
         <form id="settingsForm" class="settings-grid">
-          <label class="settings-toggle">
-            <input type="checkbox" id="setCameraEnabled" />
-            Camera enabled
-          </label>
-          <label class="settings-toggle">
-            <input type="checkbox" id="setDetectionEnabled" />
-            Detection enabled
-          </label>
+          <div class="settings-toggle-row">
+            <label class="settings-toggle">
+              <input type="checkbox" id="setCameraEnabled" />
+              Camera enabled
+            </label>
+            <label class="settings-toggle">
+              <input type="checkbox" id="setDetectionEnabled" />
+              Detection enabled
+            </label>
+            <label class="settings-toggle">
+              <input id="setMotionEnabled" type="checkbox" />
+              Motion detection
+            </label>
+          </div>
           <div class="settings-row">
             <label class="settings-field">Confidence
               <input id="setConf" type="number" min="0.01" max="1" step="0.01" />
@@ -668,36 +664,8 @@
             <label class="settings-field">JPEG quality
               <input id="setJpegQuality" type="number" min="40" max="95" step="1" />
             </label>
-            <label class="settings-toggle">
-              <input id="setMotionEnabled" type="checkbox" />
-              Motion detection
-            </label>
-          </div>
-          <div class="settings-row">
             <label class="settings-field">Motion hold seconds
               <input id="setMotionHoldSeconds" type="number" min="0" max="5" step="0.1" />
-            </label>
-            <div></div>
-          </div>
-          <div class="settings-row">
-            <label class="settings-field">Webcam device
-              <select id="setCameraIndex"></select>
-            </label>
-            <div></div>
-          </div>
-          <div class="settings-row">
-            <label class="settings-field">Camera zone
-              <select id="setCameraZone">
-                <option value="Zone A">Zone A</option>
-                <option value="Zone B">Zone B</option>
-                <option value="Zone C">Zone C</option>
-                <option value="Zone D">Zone D</option>
-                <option value="Zone E">Zone E</option>
-                <option value="Zone F">Zone F</option>
-                <option value="Zone G">Zone G</option>
-                <option value="Zone H">Zone H</option>
-                <option value="Zone I">Zone I</option>
-              </select>
             </label>
           </div>
           <div class="settings-actions">
@@ -713,38 +681,12 @@
       <section class="card live-card">
         <div class="camera-toolbar">
           <div class="camera-toolbar-copy">
-            <h2>Live Camera Feed <button id="startAnnotateBtn" type="button" class="annotate-btn">Annotate</button></h2>
-            <div class="camera-toolbar-note">Primary camera keeps the current alert flow. Use annotate on any live camera view to create manual samples.</div>
+            <h2>Live Camera Feeds <button id="startAnnotateBtn" type="button" class="annotate-btn">Annotate Camera 1</button></h2>
+            <div class="camera-toolbar-note">Camera 1 maps to Zone G and Camera 2 maps to Zone F. Both streams start automatically at launch.</div>
           </div>
-          <form id="cameraManagerForm" class="camera-manager-form">
-            <label class="settings-field">Add camera index
-              <input id="addCameraIndex" type="number" min="0" max="99" step="1" placeholder="e.g. 1" />
-            </label>
-            <button id="addCameraBtn" type="submit">Add to grid</button>
-            <span id="cameraGridStatus" class="camera-grid-status" aria-live="polite"></span>
-          </form>
+          <span id="cameraGridStatus" class="camera-grid-status" aria-live="polite"></span>
         </div>
-        <div id="cameraGrid" class="camera-grid">
-          <article class="camera-panel primary-panel">
-            <div class="camera-panel-head">
-              <div>
-                <div class="camera-panel-title">Primary feed</div>
-                <div id="primaryCameraMeta" class="camera-panel-meta">Camera 0</div>
-              </div>
-              <span id="primaryCameraStatus" class="camera-status is-muted">Loading...</span>
-            </div>
-            <div class="camera-feed-wrap">
-              <img id="feedImg" class="feed" src="/stream" alt="Live camera feed" />
-            </div>
-            <div class="camera-panel-actions">
-              <div class="camera-panel-meta">Primary feed supports live alerts, manual annotation, and training export.</div>
-              <div class="camera-panel-tools">
-                <button id="primaryAnnotateBtn" class="camera-action-btn" type="button">Annotate</button>
-              </div>
-            </div>
-          </article>
-          <div id="previewCameraCards" class="camera-preview-cards" aria-live="polite"></div>
-        </div>
+        <div id="cameraGrid" class="camera-grid" aria-live="polite"></div>
       </section>
       <section class="card alerts-card">
         <h2>Recent Alerts</h2>
@@ -753,6 +695,7 @@
             <input id="groupAlertsByZone" type="checkbox" />
             Group by zone
           </label>
+          <button id="clearStatsTableBtn" class="table-clear-btn" type="button">Clear Table</button>
         </div>
                 <section class="backend-stats" aria-label="Backend eating and drinking counts">
                     <div class="stats-total">Total people detected eating/drinking: <strong id="consumptionTotalCount">0</strong></div>
@@ -1273,7 +1216,8 @@
       }
 
       let lastActiveCameraFingerprint = '';
-      let lastPrimaryCameraIndex = 0;
+      let lastDefaultCameraIndex = 0;
+      let lastDefaultCameraLabel = 'Camera 1 (Zone G)';
       let openAnnotationForCamera = () => {};
 
       function setCameraGridStatus(message, isError = false) {
@@ -1282,109 +1226,82 @@
         statusEl.style.color = isError ? '#b91c1c' : '#374151';
       }
 
-      function setCameraStatusBadge(element, label, state = 'live') {
-        element.textContent = label;
-        element.className = 'camera-status';
-        if (state === 'error') {
-          element.classList.add('is-error');
-          return;
-        }
-        if (state === 'muted') {
-          element.classList.add('is-muted');
-        }
-      }
-
       function activeCameraFingerprint(cameras) {
         return cameras
           .map((camera) => [
-            camera.role || 'preview',
             Number(camera.index || 0),
             Boolean(camera.available),
-            camera.error || ''
+            camera.error || '',
+            camera.zone || '',
+            camera.stream_url || ''
           ].join(':'))
           .join('||');
       }
 
-      function renderPreviewCameraCard(camera) {
+      function renderCameraCard(camera) {
         const index = Number(camera.index || 0);
+        const label = String(camera.label || `Camera ${index}`);
+        const zone = String(camera.zone || 'Unassigned');
         const card = document.createElement('article');
         card.className = 'camera-panel';
         const statusText = camera.available ? 'Live' : (camera.error || 'Unavailable');
         const statusClass = camera.available ? 'camera-status' : 'camera-status is-error';
-        const metaText = camera.available
-          ? 'Auxiliary preview stream'
-          : (camera.error || 'Waiting for camera');
+        const metaText = camera.available ? `${zone}` : (camera.error || `${zone} waiting for camera`);
         card.innerHTML =
           `<div class="camera-panel-head">` +
             `<div>` +
-              `<div class="camera-panel-title">Camera ${index}</div>` +
-              `<div class="camera-panel-meta">Preview feed</div>` +
+              `<div class="camera-panel-title">${escapeHtml(label)}</div>` +
+              `<div class="camera-panel-meta">${escapeHtml(zone)}</div>` +
             `</div>` +
             `<span class="${statusClass}">${escapeHtml(statusText)}</span>` +
           `</div>` +
           `<div class="camera-feed-wrap">` +
-            `<img class="feed" src="${escapeHtml(camera.stream_url || `/stream?camera=${index}`)}" alt="Camera ${index} preview feed" />` +
+            `<img class="feed" src="${escapeHtml(camera.stream_url || `/stream?camera=${index}`)}" alt="Camera ${index} live feed" />` +
           `</div>` +
           `<div class="camera-panel-actions">` +
             `<div class="camera-panel-meta">${escapeHtml(metaText)}</div>` +
             `<div class="camera-panel-tools">` +
               `<button class="camera-action-btn" type="button">Annotate</button>` +
-              `<button class="camera-remove-btn" type="button">Remove</button>` +
             `</div>` +
           `</div>`;
         const annotateButton = card.querySelector('.camera-action-btn');
-        const removeButton = card.querySelector('.camera-remove-btn');
         annotateButton.addEventListener('click', () => {
-          openAnnotationForCamera(index, `Camera ${index}`);
-        });
-        removeButton.addEventListener('click', () => {
-          removeActiveCamera(index, removeButton);
+          openAnnotationForCamera(index, `${label} (${zone})`);
         });
         return card;
       }
 
       function renderActiveCameras(payload) {
-        const cameras = Array.isArray(payload.cameras) ? payload.cameras : [];
-        const primary = cameras.find((camera) => camera.role === 'primary');
-        const previews = cameras.filter((camera) => camera.role === 'preview');
-        const primaryMeta = document.getElementById('primaryCameraMeta');
-        const primaryStatus = document.getElementById('primaryCameraStatus');
-        const primaryAnnotateButton = document.getElementById('primaryAnnotateBtn');
+        const cameras = (Array.isArray(payload.cameras) ? payload.cameras : []).slice();
         const toolbarAnnotateButton = document.getElementById('startAnnotateBtn');
-        if (primary) {
-          const primaryIndex = Number(primary.index || 0);
-          lastPrimaryCameraIndex = primaryIndex;
-          primaryMeta.textContent = primary.error
-            ? `Camera ${primaryIndex} | ${primary.error}`
-            : `Camera ${primaryIndex}`;
-          primaryAnnotateButton.textContent = `Annotate Camera ${primaryIndex}`;
-          toolbarAnnotateButton.textContent = `Annotate Camera ${primaryIndex}`;
-          setCameraStatusBadge(
-            primaryStatus,
-            primary.available ? 'Primary live' : (primary.error || 'Unavailable'),
-            primary.available ? 'live' : 'error'
-          );
+        const defaultCamera =
+          cameras.find((camera) => String(camera.zone || '').toUpperCase() === 'ZONE G') || cameras[0];
+        if (defaultCamera) {
+          const fallbackIndex = Number(defaultCamera.index || 0);
+          const fallbackLabel = String(defaultCamera.label || `Camera ${fallbackIndex}`);
+          const fallbackZone = String(defaultCamera.zone || '');
+          lastDefaultCameraIndex = Number.isFinite(fallbackIndex) ? fallbackIndex : 0;
+          lastDefaultCameraLabel = fallbackZone ? `${fallbackLabel} (${fallbackZone})` : fallbackLabel;
+          toolbarAnnotateButton.textContent = `Annotate ${fallbackLabel}`;
         } else {
-          lastPrimaryCameraIndex = 0;
-          primaryMeta.textContent = 'Primary camera unavailable';
-          primaryAnnotateButton.textContent = 'Annotate';
-          toolbarAnnotateButton.textContent = 'Annotate';
-          setCameraStatusBadge(primaryStatus, 'Unavailable', 'error');
+          lastDefaultCameraIndex = 0;
+          lastDefaultCameraLabel = 'Camera 1 (Zone G)';
+          toolbarAnnotateButton.textContent = 'Annotate Camera 1';
         }
 
-        const previewCards = document.getElementById('previewCameraCards');
-        previewCards.innerHTML = '';
-        if (previews.length === 0) {
+        const cameraGrid = document.getElementById('cameraGrid');
+        cameraGrid.innerHTML = '';
+        if (cameras.length === 0) {
           const empty = document.createElement('article');
           empty.className = 'camera-panel camera-panel-empty';
           empty.innerHTML =
-            `<div class="camera-panel-title">No auxiliary cameras active</div>` +
-            `<div class="camera-panel-meta">Add a camera index to expand the grid without restarting the dashboard.</div>`;
-          previewCards.appendChild(empty);
+            `<div class="camera-panel-title">No cameras available</div>` +
+            `<div class="camera-panel-meta">Check Camera 1 and Camera 2 device connections.</div>`;
+          cameraGrid.appendChild(empty);
           return;
         }
-        previews.forEach((camera) => {
-          previewCards.appendChild(renderPreviewCameraCard(camera));
+        cameras.forEach((camera) => {
+          cameraGrid.appendChild(renderCameraCard(camera));
         });
       }
 
@@ -1406,71 +1323,7 @@
           setCameraGridStatus(err.message || 'Could not load camera grid', true);
         }
       }
-
-      async function addActiveCamera(event) {
-        event.preventDefault();
-        const input = document.getElementById('addCameraIndex');
-        const button = document.getElementById('addCameraBtn');
-        const value = Number(input.value);
-        if (!Number.isInteger(value) || value < 0 || value > 99) {
-          setCameraGridStatus('Enter a camera index between 0 and 99', true);
-          return;
-        }
-        button.disabled = true;
-        try {
-          const res = await fetch('/cameras/add', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index: value }),
-          });
-          if (!res.ok) {
-            throw new Error(await readApiError(res));
-          }
-          const data = await res.json();
-          if (!data.ok) {
-            throw new Error(data.error || `Could not add camera ${value}`);
-          }
-          input.value = '';
-          setCameraGridStatus(`Camera ${value} added to the grid`);
-          await refreshActiveCameras(true);
-        } catch (err) {
-          setCameraGridStatus(err.message || 'Could not add camera', true);
-        } finally {
-          button.disabled = false;
-        }
-      }
-
-      async function removeActiveCamera(index, button = null) {
-        if (button) {
-          button.disabled = true;
-        }
-        try {
-          const res = await fetch('/cameras/remove', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ index }),
-          });
-          if (!res.ok) {
-            throw new Error(await readApiError(res));
-          }
-          const data = await res.json();
-          if (!data.ok) {
-            throw new Error(data.error || `Could not remove camera ${index}`);
-          }
-          setCameraGridStatus(`Camera ${index} removed from the grid`);
-          await refreshActiveCameras(true);
-        } catch (err) {
-          setCameraGridStatus(err.message || 'Could not remove camera', true);
-        } finally {
-          if (button) {
-            button.disabled = false;
-          }
-        }
-      }
-
-      function setupCameraManager() {
-        const form = document.getElementById('cameraManagerForm');
-        form.addEventListener('submit', addActiveCamera);
+      function setupCameraGrid() {
         refreshActiveCameras(true).catch(() => {
           setCameraGridStatus('Could not load camera grid', true);
         });
@@ -1537,6 +1390,7 @@
       function applySettingsToForm(settings) {
         document.getElementById('setCameraEnabled').checked = Boolean(settings.camera_enabled);
         document.getElementById('setDetectionEnabled').checked = Boolean(settings.detection_enabled);
+        document.getElementById('setMotionEnabled').checked = Boolean(settings.motion_enabled);
         document.getElementById('setConf').value = Number(settings.conf || 0.55).toFixed(2);
         document.getElementById('setIou').value = Number(settings.iou || 0.40).toFixed(2);
         document.getElementById('setPersistFrames').value = Number(settings.persist_frames || 5);
@@ -1548,10 +1402,7 @@
         document.getElementById('setInferenceImgsz').value = Number(settings.inference_imgsz || 960).toFixed(0);
         document.getElementById('setMaxInferenceFps').value = Number(settings.max_inference_fps || 0).toFixed(1);
         document.getElementById('setJpegQuality').value = Number(settings.jpeg_quality || 75).toFixed(0);
-        document.getElementById('setMotionEnabled').checked = Boolean(settings.motion_enabled);
         document.getElementById('setMotionHoldSeconds').value = Number(settings.motion_hold_seconds || 0.1).toFixed(1);
-        document.getElementById('setCameraIndex').value = String(Number(settings.camera_index || 0));
-        document.getElementById('setCameraZone').value = settings.camera_zone || 'Zone A';
       }
 
       function readNumberField(id, label) {
@@ -1567,6 +1418,7 @@
         return {
           camera_enabled: document.getElementById('setCameraEnabled').checked,
           detection_enabled: document.getElementById('setDetectionEnabled').checked,
+          motion_enabled: document.getElementById('setMotionEnabled').checked,
           conf: readNumberField('setConf', 'confidence'),
           iou: readNumberField('setIou', 'IoU'),
           persist_frames: Math.round(readNumberField('setPersistFrames', 'persist frames')),
@@ -1578,44 +1430,8 @@
           inference_imgsz: Math.round(readNumberField('setInferenceImgsz', 'inference image size')),
           max_inference_fps: readNumberField('setMaxInferenceFps', 'max inference FPS'),
           jpeg_quality: Math.round(readNumberField('setJpegQuality', 'JPEG quality')),
-          motion_enabled: document.getElementById('setMotionEnabled').checked,
           motion_hold_seconds: readNumberField('setMotionHoldSeconds', 'motion hold seconds'),
-          camera_index: Math.round(readNumberField('setCameraIndex', 'webcam device')),
-          camera_zone: document.getElementById('setCameraZone').value,
         };
-      }
-
-      async function loadCameraDevices(selectedIndex = 0) {
-        const select = document.getElementById('setCameraIndex');
-        try {
-          const res = await fetch('/cameras');
-          if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
-          }
-          const devices = await res.json();
-          const targetValue = String(Number(selectedIndex || 0));
-          select.innerHTML = '';
-          devices.forEach((device) => {
-            const option = document.createElement('option');
-            option.value = String(Number(device.index || 0));
-            option.textContent = device.label || `Camera ${option.value}`;
-            select.appendChild(option);
-          });
-          const hasSelected = Array.from(select.options).some((option) => option.value === targetValue);
-          if (!hasSelected) {
-            const fallback = document.createElement('option');
-            fallback.value = targetValue;
-            fallback.textContent = `Camera ${targetValue}`;
-            select.appendChild(fallback);
-          }
-          select.value = targetValue;
-        } catch (err) {
-          select.innerHTML = '';
-          const fallback = document.createElement('option');
-          fallback.value = String(Number(selectedIndex || 0));
-          fallback.textContent = `Camera ${fallback.value}`;
-          select.appendChild(fallback);
-        }
       }
 
       async function loadSettings(showStatus = false) {
@@ -1625,7 +1441,6 @@
           throw new Error(text || `HTTP ${res.status}`);
         }
         const settings = await res.json();
-        await loadCameraDevices(settings.camera_index || 0);
         applySettingsToForm(settings);
         await refreshActiveCameras(true);
         if (showStatus) {
@@ -1780,6 +1595,16 @@
         return groups;
       }
 
+      function zoneSortKey(zoneName) {
+        if (zoneName === 'Zone G') {
+          return 0;
+        }
+        if (zoneName === 'Zone F') {
+          return 1;
+        }
+        return 99;
+      }
+
       function renderAlertsInto(container, alerts, errorEl, emptyMessage) {
         container.innerHTML = '';
         if (alerts.length === 0) {
@@ -1793,7 +1618,14 @@
           });
           return;
         }
-        groupAlertsByZone(alerts).forEach((groupAlerts, zone) => {
+        const groupedEntries = Array.from(groupAlertsByZone(alerts).entries()).sort((a, b) => {
+          const zoneCmp = zoneSortKey(a[0]) - zoneSortKey(b[0]);
+          if (zoneCmp !== 0) {
+            return zoneCmp;
+          }
+          return String(a[0]).localeCompare(String(b[0]));
+        });
+        groupedEntries.forEach(([zone, groupAlerts]) => {
           const group = document.createElement('section');
           group.className = 'zone-group';
           const title = document.createElement('div');
@@ -1883,7 +1715,7 @@
 
             async function refreshConsumptionStats() {
                 try {
-                    const res = await fetch('/stats/consumption');
+                const res = await fetch('/dashboard/state');
                     if (!res.ok) {
                         throw new Error(`HTTP ${res.status}`);
                     }
@@ -1895,12 +1727,35 @@
                 }
             }
 
+      async function clearDashboardTable(button) {
+        if (button) {
+          button.disabled = true;
+        }
+        try {
+          const res = await fetch('/dashboard/state/clear', {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            throw new Error(await readApiError(res));
+          }
+          await refreshConsumptionStats();
+        } catch (err) {
+          document.getElementById('error').textContent = err.message || 'Could not clear dashboard table.';
+        } finally {
+          if (button) {
+            button.disabled = false;
+          }
+        }
+      }
+
       document.getElementById('groupAlertsByZone').addEventListener('change', () => {
         renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
       });
+      document.getElementById('clearStatsTableBtn').addEventListener('click', (event) => {
+        clearDashboardTable(event.currentTarget);
+      });
       function setupAnnotation() {
         const startBtn = document.getElementById('startAnnotateBtn');
-        const primaryAnnotateBtn = document.getElementById('primaryAnnotateBtn');
         const modal = document.getElementById('annotationModal');
         const closeBtn = document.getElementById('annotationModalClose');
         const titleEl = document.getElementById('annotationModalTitle');
@@ -1918,7 +1773,7 @@
         let startX = 0, startY = 0, endX = 0, endY = 0;
         let boxDrawn = false;
         let annotationCameraIndex = null;
-        let annotationCameraLabel = 'Primary feed';
+        let annotationCameraLabel = lastDefaultCameraLabel;
         let snapshotPayload = '';
         let snapshotPayloadReady = false;
         let snapshotObjectUrl = '';
@@ -1942,7 +1797,7 @@
           modal.setAttribute('aria-hidden', 'true');
         }
 
-        function enterAnnotateMode(cameraIndex = null, cameraLabel = 'Primary feed') {
+        function enterAnnotateMode(cameraIndex = null, cameraLabel = lastDefaultCameraLabel) {
           annotationCameraIndex = cameraIndex;
           annotationCameraLabel = cameraLabel;
           titleEl.textContent = `Annotate ${cameraLabel}`;
@@ -2010,7 +1865,7 @@
             snapshotObjectUrl = '';
           }
           annotationCameraIndex = null;
-          annotationCameraLabel = 'Primary feed';
+          annotationCameraLabel = lastDefaultCameraLabel;
         }
 
         function drawOverlay() {
@@ -2096,15 +1951,12 @@
           }
         });
 
-        openAnnotationForCamera = (cameraIndex = null, cameraLabel = 'Primary feed') => {
+        openAnnotationForCamera = (cameraIndex = null, cameraLabel = lastDefaultCameraLabel) => {
           enterAnnotateMode(cameraIndex, cameraLabel);
         };
 
         startBtn.addEventListener('click', () => {
-          openAnnotationForCamera(lastPrimaryCameraIndex, `Camera ${lastPrimaryCameraIndex}`);
-        });
-        primaryAnnotateBtn.addEventListener('click', () => {
-          openAnnotationForCamera(lastPrimaryCameraIndex, `Camera ${lastPrimaryCameraIndex}`);
+          openAnnotationForCamera(lastDefaultCameraIndex, lastDefaultCameraLabel || `Camera ${lastDefaultCameraIndex}`);
         });
         closeBtn.addEventListener('click', exitAnnotateMode);
         cancelBtn.addEventListener('click', exitAnnotateMode);
@@ -2176,7 +2028,7 @@
       setupLightbox();
       setupSettingsPanel();
       setupSettingsForm();
-      setupCameraManager();
+        setupCameraGrid();
           setupStaleAlertModal();
       setupAnnotation();
       refreshAlerts();

@@ -7,6 +7,7 @@ import json
 import os
 import re
 import time
+from collections import defaultdict
 from datetime import datetime
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler
@@ -36,7 +37,6 @@ from dfx.alerts import (
     read_alerts,
     write_alerts,
 )
-from dfx.camera import list_camera_devices
 from dfx.detection import make_placeholder_svg, make_random_alerts
 from dfx.settings import settings_snapshot, update_runtime_settings, reset_runtime_settings
 from dfx.training import (
@@ -46,10 +46,35 @@ from dfx.training import (
     start_training_job,
     training_status_snapshot,
 )
-from dfx.constants import FOOD_CLASS_NAMES
+from dfx.constants import (
+    DASHBOARD_PRIMARY_CAMERA_INDEX,
+    DASHBOARD_PRIMARY_CAMERA_LABEL,
+    DASHBOARD_PRIMARY_CAMERA_ZONE,
+    DASHBOARD_SECONDARY_CAMERA_INDEX,
+    DASHBOARD_SECONDARY_CAMERA_LABEL,
+    DASHBOARD_SECONDARY_CAMERA_ZONE,
+    FOOD_CLASS_NAMES,
+)
 
 _TEMPLATE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "templates")
 _MAX_JSON_BODY_BYTES = 8_000_000
+_FIXED_PRIMARY_CAMERA_INDEX = int(DASHBOARD_PRIMARY_CAMERA_INDEX)
+_FIXED_SECONDARY_CAMERA_INDEX = int(DASHBOARD_SECONDARY_CAMERA_INDEX)
+if _FIXED_SECONDARY_CAMERA_INDEX == _FIXED_PRIMARY_CAMERA_INDEX:
+    _FIXED_SECONDARY_CAMERA_INDEX = _FIXED_PRIMARY_CAMERA_INDEX + 1
+
+_FIXED_CAMERA_LABEL_BY_INDEX = {
+    _FIXED_PRIMARY_CAMERA_INDEX: str(DASHBOARD_PRIMARY_CAMERA_LABEL),
+    _FIXED_SECONDARY_CAMERA_INDEX: str(DASHBOARD_SECONDARY_CAMERA_LABEL),
+}
+_FIXED_CAMERA_ZONE_BY_INDEX = {
+    _FIXED_PRIMARY_CAMERA_INDEX: str(DASHBOARD_PRIMARY_CAMERA_ZONE),
+    _FIXED_SECONDARY_CAMERA_INDEX: str(DASHBOARD_SECONDARY_CAMERA_ZONE),
+}
+_FIXED_CAMERA_INDICES = (
+    _FIXED_PRIMARY_CAMERA_INDEX,
+    _FIXED_SECONDARY_CAMERA_INDEX,
+)
 
 
 def _load_html_page() -> str:
@@ -59,6 +84,204 @@ def _load_html_page() -> str:
 
 
 HTML_PAGE = _load_html_page()
+
+
+def _zone_for_camera_index(camera_index: int) -> str:
+    """Return the hardcoded zone label for one supported camera index."""
+    return _FIXED_CAMERA_ZONE_BY_INDEX.get(int(camera_index), "Unassigned")
+
+
+def _label_for_camera_index(camera_index: int) -> str:
+    """Return the fixed dashboard camera role label for one camera index."""
+    return _FIXED_CAMERA_LABEL_BY_INDEX.get(int(camera_index), f"Camera {int(camera_index)}")
+
+
+def _fixed_layout_description() -> str:
+    """Return one user-facing summary of the fixed dashboard camera topology."""
+    primary_label = _label_for_camera_index(_FIXED_PRIMARY_CAMERA_INDEX)
+    secondary_label = _label_for_camera_index(_FIXED_SECONDARY_CAMERA_INDEX)
+    primary_zone = _zone_for_camera_index(_FIXED_PRIMARY_CAMERA_INDEX)
+    secondary_zone = _zone_for_camera_index(_FIXED_SECONDARY_CAMERA_INDEX)
+    return f"{primary_label} ({primary_zone}) and {secondary_label} ({secondary_zone})"
+
+
+def _dashboard_state_path(config) -> str:
+    """Resolve the on-disk JSON path used for persistent dashboard table state."""
+    configured = str(getattr(config, "dashboard_state_path", "")).strip()
+    if configured:
+        return os.path.abspath(configured)
+    if getattr(config, "alert_log", None):
+        root = os.path.dirname(os.path.abspath(str(config.alert_log)))
+    else:
+        root = os.getcwd()
+    return os.path.join(root, "dashboard_state.json")
+
+
+def _read_dashboard_state(path: str) -> dict:
+    """Read persisted dashboard table state, falling back to an empty state."""
+    default_state = {
+        "counts": {},
+        "processed_alert_ids": [],
+        "updated_at": "",
+    }
+    if not os.path.exists(path):
+        return default_state
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            loaded = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return default_state
+    if not isinstance(loaded, dict):
+        return default_state
+    counts = loaded.get("counts", {})
+    processed = loaded.get("processed_alert_ids", [])
+    if not isinstance(counts, dict):
+        counts = {}
+    if not isinstance(processed, list):
+        processed = []
+    return {
+        "counts": counts,
+        "processed_alert_ids": [str(item) for item in processed if str(item).strip()],
+        "updated_at": str(loaded.get("updated_at", "")).strip(),
+    }
+
+
+def _write_dashboard_state(path: str, state: dict) -> None:
+    """Persist dashboard table state as JSON."""
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(state, handle, indent=2)
+
+
+def _apply_alert_zone_mapping(alert: dict) -> None:
+    """Force hardcoded camera-zone tags on one alert and all of its detections."""
+    if not isinstance(alert, dict):
+        return
+    camera_index_raw = alert.get("camera_index", _FIXED_PRIMARY_CAMERA_INDEX)
+    try:
+        camera_index = int(camera_index_raw)
+    except (TypeError, ValueError):
+        camera_index = _FIXED_PRIMARY_CAMERA_INDEX
+    if camera_index not in _FIXED_CAMERA_ZONE_BY_INDEX:
+        zone_text = str(alert.get("zone", "")).strip().upper()
+        reverse_lookup = {
+            zone.upper(): idx for idx, zone in _FIXED_CAMERA_ZONE_BY_INDEX.items()
+        }
+        camera_index = reverse_lookup.get(zone_text, _FIXED_PRIMARY_CAMERA_INDEX)
+    zone = _zone_for_camera_index(camera_index)
+    alert["camera_index"] = camera_index
+    alert["zone"] = zone
+    detections = alert.get("detections")
+    if isinstance(detections, list):
+        for det in detections:
+            if isinstance(det, dict):
+                det["zone"] = zone
+
+
+def _update_dashboard_state_from_alerts(state: dict, alerts: list[dict]) -> bool:
+    """Ingest newly seen alert IDs into persistent zone/category counts."""
+    counts = state.setdefault("counts", {})
+    if not isinstance(counts, dict):
+        counts = {}
+        state["counts"] = counts
+    processed_ids = state.setdefault("processed_alert_ids", [])
+    if not isinstance(processed_ids, list):
+        processed_ids = []
+        state["processed_alert_ids"] = processed_ids
+
+    processed_set = {str(alert_id) for alert_id in processed_ids if str(alert_id).strip()}
+    changed = False
+    for alert in alerts:
+        if not isinstance(alert, dict):
+            continue
+        alert_id = str(alert.get("id", "")).strip()
+        if not alert_id or alert_id in processed_set:
+            continue
+        if not build_consumption_stats([alert]).get("total_people_detected", 0):
+            processed_set.add(alert_id)
+            processed_ids.append(alert_id)
+            changed = True
+            continue
+        zone = str(alert.get("zone", "")).strip() or "Unassigned"
+        detections = alert.get("detections") if isinstance(alert.get("detections"), list) else []
+        primary_category = "unknown"
+        best_confidence = -1.0
+        for det in detections:
+            if not isinstance(det, dict):
+                continue
+            category = str(det.get("class_name", "")).strip().lower()
+            if category not in FOOD_CLASS_NAMES:
+                continue
+            try:
+                confidence = float(det.get("confidence", 0.0))
+            except (TypeError, ValueError):
+                confidence = 0.0
+            if confidence >= best_confidence:
+                best_confidence = confidence
+                primary_category = category or "unknown"
+        key = f"{zone}||{primary_category}"
+        counts[key] = int(counts.get(key, 0)) + 1
+        processed_set.add(alert_id)
+        processed_ids.append(alert_id)
+        changed = True
+
+    if changed:
+        state["updated_at"] = datetime.now().isoformat(timespec="seconds")
+    return changed
+
+
+def _build_persistent_consumption_stats(state: dict, alerts: list[dict]) -> dict:
+    """Return frontend table payload from persistent dashboard-state counters."""
+    counts = state.get("counts", {}) if isinstance(state, dict) else {}
+    if not isinstance(counts, dict):
+        counts = {}
+    grouped: dict[str, dict[str, int]] = defaultdict(dict)
+    total = 0
+    for key, raw_count in counts.items():
+        if not isinstance(key, str):
+            continue
+        zone, _, category = key.partition("||")
+        zone_name = str(zone or "Unassigned").strip() or "Unassigned"
+        category_name = str(category or "unknown").strip() or "unknown"
+        count = int(raw_count)
+        grouped[zone_name][category_name] = grouped[zone_name].get(category_name, 0) + count
+        total += count
+
+    zone_order = {zone: idx for idx, zone in enumerate(_FIXED_CAMERA_ZONE_BY_INDEX.values())}
+    ordered_breakdown = []
+    for zone_name in sorted(
+        grouped.keys(),
+        key=lambda zone: (zone_order.get(zone, 999), zone),
+    ):
+        categories = grouped.get(zone_name, {})
+        for category_name in sorted(categories.keys()):
+            ordered_breakdown.append(
+                {
+                    "zone": zone_name,
+                    "category": category_name,
+                    "count": int(categories[category_name]),
+                }
+            )
+
+    active_alerts = 0
+    accepted_alerts = 0
+    for alert in alerts:
+        if not isinstance(alert, dict):
+            continue
+        status = str(alert.get("status", "")).strip().lower()
+        if status == "accepted":
+            accepted_alerts += 1
+        else:
+            active_alerts += 1
+
+    return {
+        "total_people_detected": int(total),
+        "active_alerts": int(active_alerts),
+        "accepted_alerts": int(accepted_alerts),
+        "breakdown": ordered_breakdown,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "persisted": True,
+    }
 
 
 class DashboardHandler(BaseHTTPRequestHandler):
@@ -92,6 +315,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self._send_train_status()
             return
         if parsed.path == "/stats/consumption":
+            self._send_consumption_stats()
+            return
+        if parsed.path == "/dashboard/state":
             self._send_consumption_stats()
             return
         if parsed.path == "/map-image":
@@ -141,6 +367,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/train/accepted":
             self._trigger_train_accepted()
             return
+        if parsed.path == "/dashboard/state/clear":
+            self._clear_dashboard_state()
+            return
         if parsed.path == "/annotate":
             self._create_manual_annotation()
             return
@@ -188,11 +417,23 @@ class DashboardHandler(BaseHTTPRequestHandler):
             frame_width = config.width or 640
             frame_height = config.height or 360
             alerts = make_random_alerts(limit, frame_width, frame_height)
+            for alert in alerts:
+                _apply_alert_zone_mapping(alert)
             self._send_json(alerts, HTTPStatus.OK)
             return
         with config.alert_lock:
             alerts = read_alerts(config.alert_log)
-            if ensure_alert_metadata(alerts):
+            changed = ensure_alert_metadata(alerts)
+            for alert in alerts:
+                original_zone = str(alert.get("zone", ""))
+                original_camera = str(alert.get("camera_index", ""))
+                _apply_alert_zone_mapping(alert)
+                if (
+                    original_zone != str(alert.get("zone", ""))
+                    or original_camera != str(alert.get("camera_index", ""))
+                ):
+                    changed = True
+            if changed:
                 write_alerts(config.alert_log, alerts)
         if limit > 0:
             alerts = alerts[-limit:]
@@ -249,11 +490,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _send_settings(self):
         """Return the current runtime settings to the browser."""
         config: DashboardConfig = self.server.config
+        self._sync_camera_manager(config)
         self._send_json(settings_snapshot(config), HTTPStatus.OK)
 
     def _send_cameras(self):
-        """Return the currently probeable webcam devices for the dropdown."""
-        self._send_json(list_camera_devices(), HTTPStatus.OK)
+        """Return the fixed dashboard camera list used by the UI."""
+        cameras = [
+            {
+                "index": index,
+                "label": f"{_label_for_camera_index(index)} ({_zone_for_camera_index(index)})",
+                "available": True,
+            }
+            for index in _FIXED_CAMERA_INDICES
+        ]
+        self._send_json(cameras, HTTPStatus.OK)
 
     def _camera_manager(self):
         """Return the optional auxiliary camera preview manager attached to the server."""
@@ -262,11 +512,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
     def _resolve_camera_source(self, camera_index_value=None):
         """Resolve the requested camera into its current frame source and UI label."""
         config = self.server.config
-        with config.settings_lock:
-            primary_index = int(config.camera_index)
-            primary_zone = str(config.camera_zone)
+        primary_index = int(_FIXED_PRIMARY_CAMERA_INDEX)
+        primary_zone = _zone_for_camera_index(primary_index)
 
-        if camera_index_value in {None, "", primary_index}:
+        if camera_index_value in {None, "", primary_index, str(primary_index)}:
             return {
                 "camera_index": primary_index,
                 "zone": primary_zone,
@@ -278,6 +527,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             requested_index = int(camera_index_value)
         except (TypeError, ValueError):
             raise ValueError("Invalid camera index") from None
+
+        if requested_index not in _FIXED_CAMERA_ZONE_BY_INDEX:
+            raise LookupError(f"Camera {requested_index} is not part of the fixed dashboard layout")
 
         if requested_index == primary_index:
             return {
@@ -295,18 +547,19 @@ class DashboardHandler(BaseHTTPRequestHandler):
             raise LookupError(f"Camera {requested_index} is not active")
         return {
             "camera_index": requested_index,
-            "zone": f"Camera {requested_index}",
+            "zone": _zone_for_camera_index(requested_index),
             "frame": preview.get_frame(),
             "jpeg": preview.get_jpeg(),
         }
 
     def _sync_camera_manager(self, config):
-        """Keep the preview manager aligned with the current primary camera settings."""
+        """Keep the fixed two-camera layout aligned with current runtime settings."""
         camera_manager = self._camera_manager()
         if camera_manager is None:
             return
         with config.settings_lock:
-            camera_index = int(config.camera_index)
+            config.camera_index = int(_FIXED_PRIMARY_CAMERA_INDEX)
+            config.camera_zone = _zone_for_camera_index(_FIXED_PRIMARY_CAMERA_INDEX)
             stream_fps = float(config.stream_fps)
             width = int(config.width)
             height = int(config.height)
@@ -317,7 +570,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
             inference_imgsz = int(config.inference_imgsz)
             max_inference_fps = float(config.max_inference_fps)
             inference_device = str(getattr(config, "inference_device", "cpu"))
-        camera_manager.update_primary_camera(camera_index)
+        camera_manager.update_primary_camera(_FIXED_PRIMARY_CAMERA_INDEX)
         camera_manager.update_stream_settings(
             stream_fps=stream_fps,
             width=width,
@@ -331,99 +584,114 @@ class DashboardHandler(BaseHTTPRequestHandler):
             inference_device=inference_device,
         )
 
+        active_preview_indices = {
+            int(item.get("index", -1))
+            for item in camera_manager.status_snapshot()
+            if isinstance(item, dict)
+        }
+        if _FIXED_SECONDARY_CAMERA_INDEX not in active_preview_indices:
+            camera_manager.add_camera(_FIXED_SECONDARY_CAMERA_INDEX)
+        for preview_index in list(active_preview_indices):
+            if preview_index != _FIXED_SECONDARY_CAMERA_INDEX:
+                camera_manager.remove_camera(preview_index)
+
     def _send_active_cameras(self):
-        """Return the primary camera plus any auxiliary preview cameras shown in the grid."""
+        """Return the fixed peer camera feeds with explicit zone assignments."""
         config = self.server.config
         self._sync_camera_manager(config)
         with config.settings_lock:
-            primary_index = int(config.camera_index)
             camera_enabled = bool(config.camera_enabled)
+        primary_index = int(_FIXED_PRIMARY_CAMERA_INDEX)
+        secondary_index = int(_FIXED_SECONDARY_CAMERA_INDEX)
         primary_available = bool(getattr(config, "camera_available", camera_enabled))
         primary_error = str(getattr(config, "camera_error", ""))
         if not camera_enabled:
             primary_available = False
             if not primary_error:
                 primary_error = "Camera is OFF"
+
+        secondary_available = False
+        secondary_error = "Camera is OFF"
+        camera_manager = self._camera_manager()
+        if camera_manager is not None:
+            secondary_preview = camera_manager.get_camera(secondary_index)
+            if secondary_preview is not None:
+                snapshot = secondary_preview.snapshot()
+                secondary_available = bool(snapshot.get("available", False))
+                secondary_error = str(snapshot.get("error", "") or "")
+
+        if not camera_enabled:
+            secondary_available = False
+            if not secondary_error:
+                secondary_error = "Camera is OFF"
+
         cameras = [
             {
                 "index": primary_index,
-                "role": "primary",
+                "label": _label_for_camera_index(primary_index),
+                "zone": _zone_for_camera_index(primary_index),
                 "available": primary_available,
                 "error": primary_error,
                 "stream_url": "/stream",
-            }
+            },
+            {
+                "index": secondary_index,
+                "label": _label_for_camera_index(secondary_index),
+                "zone": _zone_for_camera_index(secondary_index),
+                "available": secondary_available,
+                "error": secondary_error,
+                "stream_url": f"/stream?camera={secondary_index}",
+            },
         ]
-        camera_manager = self._camera_manager()
-        if camera_manager is not None:
-            for preview in camera_manager.status_snapshot():
-                cameras.append(
-                    {
-                        **preview,
-                        "role": "preview",
-                        "stream_url": f"/stream?camera={int(preview['index'])}",
-                    }
-                )
         self._send_json(
             {
-                "primary_camera_index": primary_index,
                 "cameras": cameras,
             },
             HTTPStatus.OK,
         )
 
     def _add_active_camera(self):
-        """Start one auxiliary preview camera without restarting the dashboard."""
-        camera_manager = self._camera_manager()
-        if camera_manager is None:
-            self._send_json({"ok": False, "error": "Multi-camera manager unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
-            return
-        try:
-            payload = self._read_json_body()
-        except ValueError as exc:
-            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
-            return
-        result = camera_manager.add_camera(payload.get("index"))
-        if not result.get("ok"):
-            error = str(result.get("error", "Could not add camera"))
-            status = HTTPStatus.CONFLICT if "already" in error.lower() else HTTPStatus.BAD_REQUEST
-            self._send_json(result, status)
-            return
-        self._send_json(result, HTTPStatus.OK)
+        """Reject dynamic layout changes; dashboard uses fixed peer cameras."""
+        self._send_json(
+            {
+                "ok": False,
+                "error": f"Camera layout is fixed to {_fixed_layout_description()}",
+            },
+            HTTPStatus.BAD_REQUEST,
+        )
 
     def _remove_active_camera(self):
-        """Stop one auxiliary preview camera without restarting the dashboard."""
-        camera_manager = self._camera_manager()
-        if camera_manager is None:
-            self._send_json({"ok": False, "error": "Multi-camera manager unavailable"}, HTTPStatus.SERVICE_UNAVAILABLE)
-            return
-        try:
-            payload = self._read_json_body()
-        except ValueError as exc:
-            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
-            return
-        result = camera_manager.remove_camera(payload.get("index"))
-        if not result.get("ok"):
-            self._send_json(result, HTTPStatus.NOT_FOUND)
-            return
-        self._send_json(result, HTTPStatus.OK)
+        """Reject dynamic layout changes; dashboard uses fixed peer cameras."""
+        self._send_json(
+            {
+                "ok": False,
+                "error": f"Camera layout is fixed to {_fixed_layout_description()}",
+            },
+            HTTPStatus.BAD_REQUEST,
+        )
 
     def _update_settings(self):
         """Apply settings posted from the dashboard form."""
         config: DashboardConfig = self.server.config
         try:
             payload = self._read_json_body()
-            updated = update_runtime_settings(config, payload)
+            if isinstance(payload, dict):
+                payload["camera_index"] = _FIXED_PRIMARY_CAMERA_INDEX
+                payload["camera_zone"] = _zone_for_camera_index(_FIXED_PRIMARY_CAMERA_INDEX)
+            update_runtime_settings(config, payload)
         except ValueError as exc:
             self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
             return
         self._sync_camera_manager(config)
+        updated = settings_snapshot(config)
         self._send_json({"ok": True, "settings": updated}, HTTPStatus.OK)
 
     def _reset_settings(self):
         """Restore runtime settings to the startup defaults."""
         config: DashboardConfig = self.server.config
-        updated = reset_runtime_settings(config)
+        reset_runtime_settings(config)
         self._sync_camera_manager(config)
+        updated = settings_snapshot(config)
         self._send_json({"ok": True, "settings": updated}, HTTPStatus.OK)
 
     def _send_train_status(self):
@@ -438,13 +706,48 @@ class DashboardHandler(BaseHTTPRequestHandler):
             frame_width = config.width or 640
             frame_height = config.height or 360
             alerts = make_random_alerts(40, frame_width, frame_height)
-            self._send_json(build_consumption_stats(alerts), HTTPStatus.OK)
+            for alert in alerts:
+                _apply_alert_zone_mapping(alert)
+            state = {
+                "counts": {},
+                "processed_alert_ids": [],
+                "updated_at": "",
+            }
+            _update_dashboard_state_from_alerts(state, alerts)
+            self._send_json(_build_persistent_consumption_stats(state, alerts), HTTPStatus.OK)
             return
         with config.alert_lock:
             alerts = read_alerts(config.alert_log)
-            if ensure_alert_metadata(alerts):
+            changed = ensure_alert_metadata(alerts)
+            for alert in alerts:
+                original_zone = str(alert.get("zone", ""))
+                original_camera = str(alert.get("camera_index", ""))
+                _apply_alert_zone_mapping(alert)
+                if (
+                    original_zone != str(alert.get("zone", ""))
+                    or original_camera != str(alert.get("camera_index", ""))
+                ):
+                    changed = True
+            if changed:
                 write_alerts(config.alert_log, alerts)
-        self._send_json(build_consumption_stats(alerts), HTTPStatus.OK)
+            state_path = _dashboard_state_path(config)
+            state = _read_dashboard_state(state_path)
+            if (not os.path.exists(state_path)) or _update_dashboard_state_from_alerts(state, alerts):
+                _write_dashboard_state(state_path, state)
+        self._send_json(_build_persistent_consumption_stats(state, alerts), HTTPStatus.OK)
+
+    def _clear_dashboard_state(self):
+        """Clear persistent rows used by the dashboard stats table."""
+        config = self.server.config
+        state_path = _dashboard_state_path(config)
+        empty_state = {
+            "counts": {},
+            "processed_alert_ids": [],
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
+        }
+        with config.alert_lock:
+            _write_dashboard_state(state_path, empty_state)
+        self._send_json({"ok": True, "cleared": True}, HTTPStatus.OK)
 
     def _trigger_train_accepted(self):
         """Start training on accepted snippets if the environment supports it."""
@@ -678,6 +981,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid camera index")
             return
+        if camera_index == _FIXED_PRIMARY_CAMERA_INDEX:
+            self._stream_mjpeg()
+            return
         preview = camera_manager.get_camera(camera_index)
         if preview is None:
             self.send_error(HTTPStatus.NOT_FOUND, "Camera not active")
@@ -864,8 +1170,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
             "training_exported": False,
         }
 
-        zone = str(source.get("zone", getattr(config, "camera_zone", "Zone A")))
-        camera_index = int(source.get("camera_index", getattr(config, "camera_index", 0)))
+        camera_index = int(source.get("camera_index", _FIXED_PRIMARY_CAMERA_INDEX))
+        zone = _zone_for_camera_index(camera_index)
+        detection["zone"] = zone
         alert = {
             "id": alert_id,
             "status": "new",

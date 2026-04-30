@@ -255,8 +255,14 @@ class DashboardConfig:
         self.person_proxy_last_seen_ts = 0.0
         self.person_proxy_last_approach_ts = 0.0
         self.person_proxy_last_distance_ratio = float("inf")
+        self.person_proxy_subject_bbox = None
+        self.person_proxy_last_wrist_xy = None
         self.person_proxy_last_finger_xy = None
         self.person_proxy_last_mouth_xy = None
+        self.person_proxy_wrist_history: deque[tuple[float, float, float]] = deque(maxlen=16)
+        self.person_proxy_tracks: dict[int, dict] = {}
+        self.next_person_proxy_track_id = 1
+        self.person_proxy_event_state: dict[int, dict] = {}
         self.food_motion_confirm_streak = 0
         self.person_alert_history: deque[tuple[float, float, float]] = deque(maxlen=300)
         self.alert_object_history: deque[tuple[str, float, float, float, float]] = deque(maxlen=500)

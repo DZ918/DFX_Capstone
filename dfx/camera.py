@@ -2,7 +2,9 @@
 
 import glob
 import json
+import logging
 import math
+import os
 import platform
 import queue
 import subprocess
@@ -24,19 +26,21 @@ if cv2 is not None:
 from dfx.constants import (
     ALERT_DETECTION_CONFIDENCE_FLOOR,
     ALERT_SNIPPET_CONFIDENCE_FLOOR,
-    FOOD_CLASS_NAMES,
     FOOD_HAND_TO_MOUTH_EVENT_MIN_SCORE,
     HAND_TO_MOUTH_FOOD_VISIBILITY_FLOOR,
     FOOD_MOTION_CONFIRM_FRAMES,
     FOOD_MOTION_MIN_SCORE,
     FOOD_OCCLUSION_LOOKBACK_SECONDS,
+    HAND_TO_MOUTH_PERSON_COOLDOWN_SECONDS,
+    HAND_TO_MOUTH_PERSON_TRACK_MATCH_DISTANCE_RATIO,
+    HAND_TO_MOUTH_PERSON_TRACK_MAX_GAP_SECONDS,
+    HAND_TO_MOUTH_REQUIRED_EVENTS,
+    HAND_TO_MOUTH_VIDEO_BUFFER_SECONDS,
     HAND_TO_MOUTH_WINDOW_SECONDS,
     INFERENCE_CLASS_NAMES,
-    MOTION_TRIGGER_SCORE,
     NEW_OBJECT_MIN_ALERT_GAP_SECONDS,
     OCCLUDED_MOTION_HOLD_SECONDS,
     OCCLUDED_MOTION_PROXY_SCORE,
-    PROXY_HAND_TO_MOUTH_REQUIRED_EVENTS,
     PROXY_HAND_TO_MOUTH_EVENT_MIN_SCORE,
     SAME_PERSON_ALERT_WINDOW_SECONDS,
     SAME_PERSON_MAX_ALERTS_IN_WINDOW,
@@ -62,7 +66,10 @@ from dfx.motion import (
     detect_person_hand_to_mouth_proxy,
     reset_person_hand_to_mouth_state,
 )
-from dfx.training import runtime_food_class_names, refresh_runtime_class_names
+from dfx.training import runtime_food_class_names
+
+
+logger = logging.getLogger(__name__)
 
 
 _ALERT_MIN_BOX_AREA_RATIO = 0.0012
@@ -76,7 +83,177 @@ def _camera_backend_flag() -> int:
         return 0
     if platform.system() == "Darwin" and hasattr(cv2, "CAP_AVFOUNDATION"):
         return int(cv2.CAP_AVFOUNDATION)
+    if platform.system() == "Linux" and hasattr(cv2, "CAP_V4L2"):
+        # Jetson and V4L2 USB cameras are generally more stable on the native V4L2 backend.
+        return int(cv2.CAP_V4L2)
     return int(getattr(cv2, "CAP_ANY", 0))
+
+
+def _is_jetson_linux_host() -> bool:
+    """Return whether this process appears to be running on a Jetson Linux host."""
+    if platform.system() != "Linux" or platform.machine() != "aarch64":
+        return False
+    if os.path.exists("/etc/nv_tegra_release"):
+        return True
+    return "tegra" in platform.release().lower()
+
+
+def _build_v4l2_gstreamer_pipelines(index: int, width: int, height: int, stream_fps: float) -> list[tuple[str, str]]:
+    """Build Linux V4L2 GStreamer pipeline fallbacks for one camera index."""
+    device_path = f"/dev/video{int(index)}"
+    fps = max(5, min(60, int(round(float(stream_fps))) if stream_fps > 0 else 30))
+    target_width = max(320, int(width) if int(width) > 0 else 1280)
+    target_height = max(240, int(height) if int(height) > 0 else 720)
+
+    pipelines: list[tuple[str, str]] = []
+    if _is_jetson_linux_host():
+        # Fast path for Jetson USB MJPEG cameras through NVIDIA accelerated decode.
+        pipelines.append(
+            (
+                "gstreamer-jetson-mjpeg",
+                " ! ".join(
+                    [
+                        f"v4l2src device={device_path} io-mode=2",
+                        f"image/jpeg,width={target_width},height={target_height},framerate={fps}/1",
+                        "jpegparse",
+                        "nvv4l2decoder mjpeg=1",
+                        "nvvidconv",
+                        "video/x-raw,format=BGRx",
+                        "videoconvert",
+                        "video/x-raw,format=BGR",
+                        "appsink drop=1 max-buffers=1 sync=false",
+                    ]
+                ),
+            )
+        )
+
+    pipelines.append(
+        (
+            "gstreamer-v4l2-mjpeg",
+            " ! ".join(
+                [
+                    f"v4l2src device={device_path} io-mode=2",
+                    f"image/jpeg,width={target_width},height={target_height},framerate={fps}/1",
+                    "jpegdec",
+                    "videoconvert",
+                    "video/x-raw,format=BGR",
+                    "appsink drop=1 max-buffers=1 sync=false",
+                ]
+            ),
+        )
+    )
+    pipelines.append(
+        (
+            "gstreamer-v4l2-raw",
+            " ! ".join(
+                [
+                    f"v4l2src device={device_path} io-mode=2",
+                    f"video/x-raw,width={target_width},height={target_height},framerate={fps}/1",
+                    "videoconvert",
+                    "video/x-raw,format=BGR",
+                    "appsink drop=1 max-buffers=1 sync=false",
+                ]
+            ),
+        )
+    )
+    return pipelines
+
+
+def _warm_camera_stream(capture, warmup_reads: int = 4) -> bool:
+    """Attempt a few initial reads so freshly-opened cameras can settle."""
+    if capture is None:
+        return False
+    for _ in range(max(1, int(warmup_reads))):
+        ok, frame = capture.read()
+        if ok and frame is not None and getattr(frame, "size", 0) > 0:
+            return True
+    return False
+
+
+def _open_camera_capture_with_fallback(
+    index: int,
+    *,
+    width: int = 0,
+    height: int = 0,
+    stream_fps: float = 0.0,
+) -> tuple[object | None, str, list[str]]:
+    """Try multiple OpenCV/GStreamer strategies and return capture plus diagnostics."""
+    if cv2 is None:
+        return None, "OpenCV unavailable", ["OpenCV is unavailable"]
+
+    diagnostics: list[str] = []
+    attempts: list[tuple[str, object, int]] = []
+    seen_attempts: set[tuple[str, int]] = set()
+
+    def _append_attempt(label: str, source: object, backend: int):
+        key = (str(source), int(backend))
+        if key in seen_attempts:
+            return
+        seen_attempts.add(key)
+        attempts.append((label, source, backend))
+
+    if platform.system() == "Linux" and hasattr(cv2, "CAP_V4L2"):
+        _append_attempt("opencv-v4l2-index", int(index), int(cv2.CAP_V4L2))
+    preferred_backend = int(_camera_backend_flag())
+    _append_attempt("opencv-preferred-index", int(index), preferred_backend)
+    if hasattr(cv2, "CAP_ANY"):
+        _append_attempt("opencv-cap-any-index", int(index), int(cv2.CAP_ANY))
+
+    device_path = f"/dev/video{int(index)}"
+    if (
+        platform.system() == "Linux"
+        and os.path.exists(device_path)
+        and hasattr(cv2, "CAP_GSTREAMER")
+    ):
+        for label, pipeline in _build_v4l2_gstreamer_pipelines(index, width, height, stream_fps):
+            _append_attempt(label, pipeline, int(cv2.CAP_GSTREAMER))
+
+    for label, source, backend in attempts:
+        capture = None
+        try:
+            capture = cv2.VideoCapture(source, backend) if int(backend) else cv2.VideoCapture(source)
+        except Exception as exc:
+            diagnostics.append(f"{label}: constructor error ({exc})")
+            continue
+
+        if capture is None:
+            diagnostics.append(f"{label}: constructor returned None")
+            continue
+
+        try:
+            if hasattr(cv2, "CAP_PROP_BUFFERSIZE"):
+                capture.set(cv2.CAP_PROP_BUFFERSIZE, 1)
+            if int(width) > 0 and hasattr(cv2, "CAP_PROP_FRAME_WIDTH"):
+                capture.set(cv2.CAP_PROP_FRAME_WIDTH, int(width))
+            if int(height) > 0 and hasattr(cv2, "CAP_PROP_FRAME_HEIGHT"):
+                capture.set(cv2.CAP_PROP_FRAME_HEIGHT, int(height))
+            if float(stream_fps) > 0 and hasattr(cv2, "CAP_PROP_FPS"):
+                capture.set(cv2.CAP_PROP_FPS, float(stream_fps))
+            if platform.system() == "Linux" and hasattr(cv2, "CAP_PROP_FOURCC"):
+                capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+        except Exception:
+            # Property setting is best-effort and backend-specific.
+            pass
+
+        if not capture.isOpened():
+            diagnostics.append(f"{label}: open failed")
+            capture.release()
+            continue
+
+        if not _warm_camera_stream(capture):
+            diagnostics.append(f"{label}: opened but failed to read warmup frames")
+            capture.release()
+            continue
+
+        actual_width = int(capture.get(getattr(cv2, "CAP_PROP_FRAME_WIDTH", 3)) or 0)
+        actual_height = int(capture.get(getattr(cv2, "CAP_PROP_FRAME_HEIGHT", 4)) or 0)
+        actual_fps = float(capture.get(getattr(cv2, "CAP_PROP_FPS", 5)) or 0.0)
+        diagnostics.append(
+            f"{label}: opened ({actual_width}x{actual_height} @ {actual_fps:.2f} fps)"
+        )
+        return capture, label, diagnostics
+
+    return None, f"Camera {int(index)} unavailable", diagnostics
 
 
 def _open_camera_capture(index: int):
@@ -198,6 +375,9 @@ def _reset_motion_and_person_state(config):
     config.alert_object_history.clear()
     config.motion_tracks.clear()
     config.next_motion_track_id = 1
+    config.person_proxy_tracks.clear()
+    config.next_person_proxy_track_id = 1
+    config.person_proxy_event_state.clear()
 
 
 def _is_same_person_suppressed(config, alert_person_center, wall_now: float, frame_diag: float) -> bool:
@@ -231,6 +411,236 @@ def _clamp_bbox_xyxy(bounds, frame_width: int, frame_height: int) -> tuple[int, 
     return left, top, right, bottom
 
 
+def _extract_bbox_xyxy(det: dict) -> tuple[float, float, float, float] | None:
+    """Return a normalized bbox tuple from one detection dict."""
+    bbox = det.get("bbox_xyxy") if isinstance(det, dict) else None
+    if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+        return None
+    try:
+        x1, y1, x2, y2 = (float(value) for value in bbox)
+    except (TypeError, ValueError):
+        return None
+    if x2 <= x1 or y2 <= y1:
+        return None
+    return x1, y1, x2, y2
+
+
+def _bbox_center_xy(bbox: tuple[float, float, float, float]) -> tuple[float, float]:
+    """Return one bbox center as (x, y)."""
+    x1, y1, x2, y2 = bbox
+    return ((x1 + x2) * 0.5, (y1 + y2) * 0.5)
+
+
+def _bbox_iou(box_a: tuple[float, float, float, float], box_b: tuple[float, float, float, float]) -> float:
+    """Return IoU overlap for two bboxes in xyxy format."""
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+    inter_left = max(ax1, bx1)
+    inter_top = max(ay1, by1)
+    inter_right = min(ax2, bx2)
+    inter_bottom = min(ay2, by2)
+    inter_w = max(0.0, inter_right - inter_left)
+    inter_h = max(0.0, inter_bottom - inter_top)
+    inter_area = inter_w * inter_h
+    if inter_area <= 0.0:
+        return 0.0
+    area_a = max(1.0, (ax2 - ax1) * (ay2 - ay1))
+    area_b = max(1.0, (bx2 - bx1) * (by2 - by1))
+    return inter_area / max(1.0, (area_a + area_b - inter_area))
+
+
+def _point_in_bbox(point_xy: tuple[float, float], bbox: tuple[float, float, float, float]) -> bool:
+    """Return True when one point lies within one bbox."""
+    px, py = point_xy
+    x1, y1, x2, y2 = bbox
+    return x1 <= px <= x2 and y1 <= py <= y2
+
+
+def _update_proxy_person_tracks(config, person_detections: list[dict], now_ts: float, frame_diag: float) -> None:
+    """Attach stable local person IDs to current detections using IoU + center distance."""
+    tracks = getattr(config, "person_proxy_tracks", None)
+    if not isinstance(tracks, dict):
+        tracks = {}
+        config.person_proxy_tracks = tracks
+
+    max_gap = max(0.5, float(HAND_TO_MOUTH_PERSON_TRACK_MAX_GAP_SECONDS))
+    for track_id, track in list(tracks.items()):
+        if (now_ts - float(track.get("last_seen_ts", 0.0))) > max_gap:
+            tracks.pop(track_id, None)
+
+    max_match_distance = max(
+        40.0,
+        float(HAND_TO_MOUTH_PERSON_TRACK_MATCH_DISTANCE_RATIO) * max(1.0, float(frame_diag)),
+    )
+    unmatched_track_ids: set[int] = set(tracks.keys())
+
+    for det in sorted(
+        person_detections,
+        key=lambda entry: float(entry.get("confidence", 0.0)) if isinstance(entry, dict) else 0.0,
+        reverse=True,
+    ):
+        bbox = _extract_bbox_xyxy(det)
+        if bbox is None:
+            continue
+        center = _bbox_center_xy(bbox)
+
+        best_track_id = None
+        best_score = float("-inf")
+        for track_id in list(unmatched_track_ids):
+            track = tracks.get(track_id)
+            if not isinstance(track, dict):
+                continue
+            track_bbox_raw = track.get("bbox_xyxy")
+            if not isinstance(track_bbox_raw, (list, tuple)) or len(track_bbox_raw) != 4:
+                continue
+            try:
+                track_bbox = tuple(float(v) for v in track_bbox_raw)
+            except (TypeError, ValueError):
+                continue
+            track_center = _bbox_center_xy(track_bbox)
+            center_distance = math.hypot(center[0] - track_center[0], center[1] - track_center[1])
+            iou = _bbox_iou(bbox, track_bbox)
+            if center_distance > max_match_distance and iou < 0.10:
+                continue
+            score = (iou * 2.0) - (center_distance / max(1.0, max_match_distance))
+            if score > best_score:
+                best_score = score
+                best_track_id = track_id
+
+        if best_track_id is None:
+            best_track_id = int(getattr(config, "next_person_proxy_track_id", 1))
+            config.next_person_proxy_track_id = best_track_id + 1
+            tracks[best_track_id] = {}
+
+        tracks[best_track_id] = {
+            "bbox_xyxy": [float(bbox[0]), float(bbox[1]), float(bbox[2]), float(bbox[3])],
+            "center_xy": [float(center[0]), float(center[1])],
+            "last_seen_ts": float(now_ts),
+        }
+        det["person_proxy_track_id"] = int(best_track_id)
+        unmatched_track_ids.discard(best_track_id)
+
+
+def _resolve_proxy_person_track_id(person_detections: list[dict], proxy_details: dict | None) -> int | None:
+    """Resolve which person track owns the current proxy hand-to-mouth geometry."""
+    if not isinstance(proxy_details, dict):
+        return None
+
+    target_bbox = proxy_details.get("subject_bbox_xyxy")
+    bbox_tuple = None
+    if isinstance(target_bbox, (list, tuple)) and len(target_bbox) == 4:
+        try:
+            bbox_tuple = tuple(float(v) for v in target_bbox)
+        except (TypeError, ValueError):
+            bbox_tuple = None
+
+    target_point = None
+    wrist_xy = proxy_details.get("wrist_xy")
+    mouth_xy = proxy_details.get("mouth_xy")
+    if isinstance(wrist_xy, (list, tuple)) and len(wrist_xy) == 2:
+        try:
+            target_point = (float(wrist_xy[0]), float(wrist_xy[1]))
+        except (TypeError, ValueError):
+            target_point = None
+    if target_point is None and isinstance(mouth_xy, (list, tuple)) and len(mouth_xy) == 2:
+        try:
+            target_point = (float(mouth_xy[0]), float(mouth_xy[1]))
+        except (TypeError, ValueError):
+            target_point = None
+
+    best_track_id = None
+    best_score = float("-inf")
+    for det in person_detections:
+        track_id = det.get("person_proxy_track_id") if isinstance(det, dict) else None
+        if track_id is None:
+            continue
+        bbox = _extract_bbox_xyxy(det)
+        if bbox is None:
+            continue
+
+        score = 0.0
+        if bbox_tuple is not None:
+            score += _bbox_iou(bbox_tuple, bbox) * 2.0
+        if target_point is not None:
+            center = _bbox_center_xy(bbox)
+            box_diag = max(1.0, math.hypot(bbox[2] - bbox[0], bbox[3] - bbox[1]))
+            center_distance = math.hypot(target_point[0] - center[0], target_point[1] - center[1])
+            score -= center_distance / box_diag
+            if _point_in_bbox(target_point, bbox):
+                score += 0.6
+
+        if score > best_score:
+            best_score = score
+            best_track_id = int(track_id)
+
+    return best_track_id
+
+
+def _register_proxy_hand_to_mouth_event(
+    config,
+    person_track_id: int | None,
+    event_active: bool,
+    now_ts: float,
+) -> tuple[bool, int]:
+    """Record a rising-edge event and evaluate per-person 3-in-30 trigger + cooldown."""
+    state_by_person = getattr(config, "person_proxy_event_state", None)
+    if not isinstance(state_by_person, dict):
+        state_by_person = {}
+        config.person_proxy_event_state = state_by_person
+
+    if person_track_id is None:
+        for tracked_state in state_by_person.values():
+            tracked_state["last_event_active"] = False
+        return False, 0
+
+    state = state_by_person.setdefault(
+        int(person_track_id),
+        {
+            "event_times": deque(),
+            "last_event_active": False,
+            "cooldown_until": 0.0,
+            "last_seen_ts": float(now_ts),
+        },
+    )
+    event_times = state.get("event_times")
+    if not isinstance(event_times, deque):
+        event_times = deque()
+        state["event_times"] = event_times
+
+    while event_times and (now_ts - float(event_times[0])) > HAND_TO_MOUTH_WINDOW_SECONDS:
+        event_times.popleft()
+
+    last_event_active = bool(state.get("last_event_active", False))
+    if bool(event_active) and not last_event_active:
+        event_times.append(float(now_ts))
+
+    while event_times and (now_ts - float(event_times[0])) > HAND_TO_MOUTH_WINDOW_SECONDS:
+        event_times.popleft()
+
+    event_count = len(event_times)
+    cooldown_until = float(state.get("cooldown_until", 0.0))
+    triggered = bool(
+        event_count >= int(HAND_TO_MOUTH_REQUIRED_EVENTS)
+        and now_ts >= cooldown_until
+    )
+    if triggered:
+        state["cooldown_until"] = float(now_ts + HAND_TO_MOUTH_PERSON_COOLDOWN_SECONDS)
+        state["last_trigger_ts"] = float(now_ts)
+
+    state["last_event_active"] = bool(event_active)
+    state["last_seen_ts"] = float(now_ts)
+
+    stale_after = max(
+        float(HAND_TO_MOUTH_PERSON_COOLDOWN_SECONDS) * 2.0,
+        float(HAND_TO_MOUTH_PERSON_TRACK_MAX_GAP_SECONDS) * 8.0,
+    )
+    for tracked_person_id, tracked_state in list(state_by_person.items()):
+        if (now_ts - float(tracked_state.get("last_seen_ts", 0.0))) > stale_after:
+            state_by_person.pop(tracked_person_id, None)
+
+    return triggered, event_count
+
+
 def _build_hand_to_mouth_alert_marker(config, frame, person_detections: list[dict], motion_score: float, motion_source: str):
     """Build a fallback boxed detection so proxy-only motion alerts always attach a snippet image."""
     frame_h, frame_w = frame.shape[:2]
@@ -253,18 +663,20 @@ def _build_hand_to_mouth_alert_marker(config, frame, person_detections: list[dic
             marker_bbox = (x1, y1, x2, y2)
 
     mouth_xy = getattr(config, "person_proxy_last_mouth_xy", None)
-    finger_xy = getattr(config, "person_proxy_last_finger_xy", None)
-    if marker_bbox is None and mouth_xy is not None and finger_xy is not None:
-        min_x = min(float(mouth_xy[0]), float(finger_xy[0]))
-        min_y = min(float(mouth_xy[1]), float(finger_xy[1]))
-        max_x = max(float(mouth_xy[0]), float(finger_xy[0]))
-        max_y = max(float(mouth_xy[1]), float(finger_xy[1]))
+    wrist_xy = getattr(config, "person_proxy_last_wrist_xy", None)
+    if wrist_xy is None:
+        wrist_xy = getattr(config, "person_proxy_last_finger_xy", None)
+    if marker_bbox is None and mouth_xy is not None and wrist_xy is not None:
+        min_x = min(float(mouth_xy[0]), float(wrist_xy[0]))
+        min_y = min(float(mouth_xy[1]), float(wrist_xy[1]))
+        max_x = max(float(mouth_xy[0]), float(wrist_xy[0]))
+        max_y = max(float(mouth_xy[1]), float(wrist_xy[1]))
         span = max(max_x - min_x, max_y - min_y, 40.0)
         pad = max(26.0, span * 0.80)
         marker_bbox = (min_x - pad, min_y - pad, max_x + pad, max_y + pad)
 
-    if marker_bbox is None and (mouth_xy is not None or finger_xy is not None):
-        anchor = mouth_xy if mouth_xy is not None else finger_xy
+    if marker_bbox is None and (mouth_xy is not None or wrist_xy is not None):
+        anchor = mouth_xy if mouth_xy is not None else wrist_xy
         anchor_x = float(anchor[0])
         anchor_y = float(anchor[1])
         pad = max(48.0, min(frame_w, frame_h) * 0.08)
@@ -408,6 +820,7 @@ def _persist_alert_synchronously(config, payload: dict):
         hand_to_mouth_event_count=payload["hand_to_mouth_event_count"],
         attach_video=payload["attach_video"],
         video_required=payload.get("video_required", False),
+        prefer_mp4=payload.get("prefer_mp4", False),
         alert_reason=payload["alert_reason"],
     )
     if alert is None:
@@ -457,7 +870,15 @@ def camera_worker(config, cam_index: int):
     allowed_ids = None
     active_model = None
     active_allowed_names: frozenset[str] = frozenset()
-    recent_frames: deque = deque(maxlen=80)
+    last_open_failure_summary = ""
+    last_open_failure_logged_at = 0.0
+    last_open_success_source = ""
+    last_read_failure_logged_at = 0.0
+    initial_buffer_frames = max(
+        30,
+        int(max(3.0, float(getattr(config, "stream_fps", 10.0))) * HAND_TO_MOUTH_VIDEO_BUFFER_SECONDS),
+    )
+    recent_frames: deque = deque(maxlen=initial_buffer_frames)
 
     try:
         while not config.stop:
@@ -481,11 +902,20 @@ def camera_worker(config, cam_index: int):
                 camera_index = int(config.camera_index)
                 camera_zone = str(config.camera_zone)
 
+            target_buffer_frames = max(
+                30,
+                int(max(3.0, stream_fps) * HAND_TO_MOUTH_VIDEO_BUFFER_SECONDS),
+            )
+            if recent_frames.maxlen != target_buffer_frames:
+                recent_frames = deque(recent_frames, maxlen=target_buffer_frames)
+
             if not camera_enabled:
                 if cap is not None:
                     cap.release()
                     cap = None
                     active_cam_index = camera_index
+                config.camera_available = False
+                config.camera_error = "Camera is OFF"
                 # Turning the camera off also resets the alert state machine.
                 _reset_alert_debounce_state(config)
                 _reset_motion_and_person_state(config)
@@ -501,16 +931,36 @@ def camera_worker(config, cam_index: int):
                 cap.release()
                 cap = None
                 active_cam_index = camera_index
+                config.camera_available = False
+                config.camera_error = f"Camera {camera_index} switching"
                 allowed_ids = None
                 next_inference_at = 0.0
 
             if cap is None:
-                cap = _open_camera_capture(camera_index)
+                cap, source_label, diagnostics = _open_camera_capture_with_fallback(
+                    camera_index,
+                    width=out_width,
+                    height=out_height,
+                    stream_fps=stream_fps,
+                )
                 if cap is None:
-                    raise RuntimeError("OpenCV camera backend is not available.")
-                if not cap.isOpened():
-                    cap.release()
-                    cap = None
+                    summary = diagnostics[-1] if diagnostics else f"Camera {camera_index} unavailable"
+                    config.camera_available = False
+                    config.camera_error = f"Camera {camera_index} unavailable"
+                    now_ts = time.time()
+                    if (
+                        summary != last_open_failure_summary
+                        or (now_ts - last_open_failure_logged_at) >= 8.0
+                    ):
+                        logger.warning(
+                            "Camera %s failed to open. Last attempt: %s",
+                            camera_index,
+                            summary,
+                        )
+                        for detail in diagnostics:
+                            logger.warning("Camera %s open detail: %s", camera_index, detail)
+                        last_open_failure_summary = summary
+                        last_open_failure_logged_at = now_ts
                     _publish_status_frame(
                         config,
                         out_width,
@@ -520,6 +970,11 @@ def camera_worker(config, cam_index: int):
                     )
                     time.sleep(1.0)
                     continue
+                config.camera_available = True
+                config.camera_error = ""
+                if source_label != last_open_success_source:
+                    logger.info("Camera %s opened via %s", camera_index, source_label)
+                    last_open_success_source = source_label
                 active_cam_index = camera_index
                 allowed_ids = None
                 next_inference_at = 0.0
@@ -528,6 +983,11 @@ def camera_worker(config, cam_index: int):
 
             ok, frame = cap.read()
             if not ok:
+                config.camera_available = False
+                config.camera_error = f"Camera {camera_index} read failed"
+                if (wall_now - last_read_failure_logged_at) >= 5.0:
+                    logger.warning("Camera %s read failed, reconnecting", camera_index)
+                    last_read_failure_logged_at = wall_now
                 cap.release()
                 cap = None
                 allowed_ids = None
@@ -535,8 +995,13 @@ def camera_worker(config, cam_index: int):
                 time.sleep(0.1)
                 continue
 
+            config.camera_available = True
+            config.camera_error = ""
+
             # Cameras are physically mounted upside down; rotate before detection and streaming.
             frame = cv2.flip(frame, -1)
+
+            frame_diag = math.hypot(float(frame.shape[1]), float(frame.shape[0]))
 
             recent_frames.append(frame.copy())
 
@@ -546,6 +1011,11 @@ def camera_worker(config, cam_index: int):
             motion_source = "none"
             inference_ran = False
             hand_to_mouth_event_active = False
+            hand_to_mouth_event_count = 0
+            motion_burst_trigger = False
+            burst_trigger_frames: list | None = None
+            person_proxy_details: dict | None = None
+            proxy_person_track_id: int | None = None
             all_detections = detections
             alert_detections: list[dict] = []
             primary_alert_detections: list[dict] = []
@@ -616,6 +1086,7 @@ def camera_worker(config, cam_index: int):
                         for det in all_detections
                         if str(det.get("class_name", "")).strip().lower() == "person"
                     ]
+                    _update_proxy_person_tracks(config, person_detections, wall_now, frame_diag)
                     primary_alert_detections = _select_primary_alert_detections(
                         alert_detections,
                         person_detections,
@@ -640,7 +1111,7 @@ def camera_worker(config, cam_index: int):
                         motion_score = float(raw_motion_score)
                         if motion_detected:
                             motion_source = "food_track"
-                        person_proxy_detected, person_proxy_score = detect_person_hand_to_mouth_proxy(
+                        person_proxy_detected, person_proxy_score, person_proxy_details = detect_person_hand_to_mouth_proxy(
                             config,
                             frame,
                             person_detections,
@@ -677,6 +1148,7 @@ def camera_worker(config, cam_index: int):
                         config.food_motion_confirm_streak = 0
                         motion_detected = False
                         motion_score = 0.0
+                        person_proxy_details = None
 
                     hand_to_mouth_event_active = (
                         motion_detected
@@ -693,17 +1165,19 @@ def camera_worker(config, cam_index: int):
                         )
                     )
 
-                    mediapipe_hand_to_mouth_event_active = (
-                        hand_to_mouth_event_active and motion_source == "person_proxy"
+                    proxy_sequence_active = bool(hand_to_mouth_event_active and motion_source == "person_proxy")
+                    proxy_person_track_id = _resolve_proxy_person_track_id(
+                        person_detections,
+                        person_proxy_details,
                     )
-                    if mediapipe_hand_to_mouth_event_active and not config.last_motion_active:
-                        config.motion_event_times.append(wall_now)
-                    while (
-                        config.motion_event_times
-                        and (wall_now - config.motion_event_times[0]) > HAND_TO_MOUTH_WINDOW_SECONDS
-                    ):
-                        config.motion_event_times.popleft()
-                    config.last_motion_active = bool(mediapipe_hand_to_mouth_event_active)
+                    motion_burst_trigger, hand_to_mouth_event_count = _register_proxy_hand_to_mouth_event(
+                        config,
+                        proxy_person_track_id,
+                        proxy_sequence_active,
+                        wall_now,
+                    )
+                    if motion_burst_trigger:
+                        burst_trigger_frames = list(recent_frames)
 
                     last_detections = detections
                     last_motion_detected = motion_detected
@@ -736,12 +1210,7 @@ def camera_worker(config, cam_index: int):
                 config.stationary_first_alert_ts = 0.0
                 config.stationary_followup_sent = False
 
-            motion_burst_trigger = (
-                inference_ran
-                and hand_to_mouth_event_active
-                and motion_source == "person_proxy"
-                and len(config.motion_event_times) >= PROXY_HAND_TO_MOUTH_REQUIRED_EVENTS
-            )
+            motion_burst_trigger = bool(inference_ran and motion_burst_trigger)
             hand_to_mouth_pending_sequence = (
                 inference_ran
                 and hand_to_mouth_event_active
@@ -763,7 +1232,6 @@ def camera_worker(config, cam_index: int):
                 and config.armed
                 and (wall_now - config.last_alert_ts) >= max(0.0, cooldown)
             )
-            frame_diag = math.hypot(float(frame.shape[1]), float(frame.shape[0]))
             new_object_trigger = (
                 inference_ran
                 and bool(primary_alert_detections)
@@ -819,7 +1287,11 @@ def camera_worker(config, cam_index: int):
 
                 attach_video_for_alert = bool(motion_detected or motion_burst_trigger or hand_to_mouth_event_active)
                 video_required_for_alert = bool(motion_burst_trigger)
-                recent_frames_snapshot = list(recent_frames)
+                recent_frames_snapshot = (
+                    list(burst_trigger_frames)
+                    if motion_burst_trigger and burst_trigger_frames
+                    else list(recent_frames)
+                )
                 if attach_video_for_alert and len(recent_frames_snapshot) < 3:
                     recent_frames_snapshot.extend([frame.copy() for _ in range(3 - len(recent_frames_snapshot))])
 
@@ -835,9 +1307,10 @@ def camera_worker(config, cam_index: int):
                     "motion_detected": motion_detected,
                     "motion_score": motion_score,
                     "hand_to_mouth_source": motion_source,
-                    "hand_to_mouth_event_count": len(config.motion_event_times),
+                    "hand_to_mouth_event_count": int(hand_to_mouth_event_count),
                     "attach_video": attach_video_for_alert,
                     "video_required": video_required_for_alert,
+                    "prefer_mp4": bool(motion_burst_trigger),
                     "alert_reason": reason,
                 }
                 if not _enqueue_alert_job(config, alert_payload):
@@ -853,8 +1326,8 @@ def camera_worker(config, cam_index: int):
                         )
                     )
                 if motion_burst_trigger:
-                    # Immediate burst alerts bypass cooldown/arming but should not spam every frame.
-                    config.motion_event_times.clear()
+                    # Per-person cooldown throttles proxy burst alerts.
+                    pass
                 elif stationary_followup_trigger:
                     config.stationary_followup_sent = True
                 elif new_object_trigger:

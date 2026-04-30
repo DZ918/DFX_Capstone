@@ -444,6 +444,7 @@ def add_alert_video(
     video_dir: str | None,
     alert_id: str,
     fps: float,
+    prefer_mp4: bool = False,
 ) -> tuple[str, str] | None:
     """Persist a short alert clip captured around the trigger moment."""
     if cv2 is None:
@@ -532,7 +533,7 @@ def add_alert_video(
             pass
         return None
 
-    if platform.system() == "Linux":
+    if platform.system() == "Linux" and not prefer_mp4:
         # Jetson/OpenCV builds frequently emit MP4 files that decode in OpenCV but fail in browsers.
         # Prefer an animated GIF attachment so the dashboard always renders the recording inline.
         gif_result = _write_alert_gif()
@@ -588,7 +589,7 @@ def add_alert_video(
                 pass
             continue
         if _is_usable_alert_video(output_path, min_written_frames=written_frames):
-            if platform.system() == "Linux" and codec == "mp4v":
+            if platform.system() == "Linux" and codec == "mp4v" and not prefer_mp4:
                 # MPEG-4 Part 2 often decodes in OpenCV but not in browser <video>.
                 gif_result = _write_alert_gif()
                 if gif_result is not None:
@@ -623,6 +624,7 @@ def create_alert(
     hand_to_mouth_event_count: int = 0,
     attach_video: bool = False,
     video_required: bool = False,
+    prefer_mp4: bool = False,
     alert_reason: str = "standard",
 ) -> dict | None:
     """Build the alert record stored in JSON and rendered by the dashboard."""
@@ -638,6 +640,7 @@ def create_alert(
             video_dir=video_dir,
             alert_id=alert_id,
             fps=video_fps,
+            prefer_mp4=bool(prefer_mp4),
         )
         if video_result is not None:
             video_file, video_mime = video_result

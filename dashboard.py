@@ -25,6 +25,12 @@ from dfx.server import DashboardHandler, HTML_PAGE as DASHBOARD_HTML_PAGE
 from dfx.settings import DashboardConfig
 from dfx.training import refresh_runtime_class_names
 from dfx.constants import (
+    DASHBOARD_PRIMARY_CAMERA_INDEX,
+    DASHBOARD_PRIMARY_CAMERA_LABEL,
+    DASHBOARD_PRIMARY_CAMERA_ZONE,
+    DASHBOARD_SECONDARY_CAMERA_INDEX,
+    DASHBOARD_SECONDARY_CAMERA_LABEL,
+    DASHBOARD_SECONDARY_CAMERA_ZONE,
     DEFAULT_DASHBOARD_CONFIDENCE,
     DEFAULT_DASHBOARD_MODEL_PATH,
     DEFAULT_MAP_IMAGE_PATH,
@@ -33,6 +39,14 @@ from dfx.constants import (
 
 # Ensure Jetson Orin Nano CUDA libraries are linked before PyTorch initializes
 configure_jetson_gpu_env()
+
+
+FIXED_PRIMARY_CAMERA_INDEX = int(DASHBOARD_PRIMARY_CAMERA_INDEX)
+FIXED_SECONDARY_CAMERA_INDEX = int(DASHBOARD_SECONDARY_CAMERA_INDEX)
+FIXED_PRIMARY_CAMERA_LABEL = str(DASHBOARD_PRIMARY_CAMERA_LABEL)
+FIXED_SECONDARY_CAMERA_LABEL = str(DASHBOARD_SECONDARY_CAMERA_LABEL)
+FIXED_PRIMARY_CAMERA_ZONE = str(DASHBOARD_PRIMARY_CAMERA_ZONE)
+FIXED_SECONDARY_CAMERA_ZONE = str(DASHBOARD_SECONDARY_CAMERA_ZONE)
 
 
 class StandaloneDashboardHandler(DashboardHandler):
@@ -95,6 +109,7 @@ def _alert_persist_worker(config):
                 hand_to_mouth_event_count=payload["hand_to_mouth_event_count"],
                 attach_video=payload["attach_video"],
                 video_required=payload.get("video_required", False),
+                prefer_mp4=payload.get("prefer_mp4", False),
                 alert_reason=payload["alert_reason"],
             )
             if alert is None:
@@ -117,7 +132,7 @@ def main():
     parser = argparse.ArgumentParser(description="Camera dashboard with live alerts")
     parser.add_argument("--test", action="store_true", help="Run with synthetic feed/alerts")
     parser.add_argument("--model", default=DEFAULT_DASHBOARD_MODEL_PATH, help="Path to YOLO model weights")
-    parser.add_argument("--cam", type=int, default=0, help="Camera index")
+    parser.add_argument("--cam", type=int, default=FIXED_PRIMARY_CAMERA_INDEX, help="Camera index")
     parser.add_argument("--host", default="0.0.0.0", help="Host interface")
     parser.add_argument("--port", type=int, default=8000, help="Port")
     parser.add_argument("--alert-log", default="alerts.json", help="Alert JSON path")
@@ -132,8 +147,8 @@ def main():
     parser.add_argument("--max-inference-fps", type=float, default=0.0)
     parser.add_argument("--jpeg-quality", type=int, default=75)
     parser.add_argument("--motion-hold-seconds", type=float, default=0.1)
-    parser.add_argument("--camera-index", type=int, default=0)
-    parser.add_argument("--camera-zone", default="Zone A")
+    parser.add_argument("--camera-index", type=int, default=FIXED_PRIMARY_CAMERA_INDEX)
+    parser.add_argument("--camera-zone", default=FIXED_PRIMARY_CAMERA_ZONE)
     parser.add_argument("--map-image", default=DEFAULT_MAP_IMAGE_PATH)
     parser.add_argument("--fps", type=int, default=10)
     parser.add_argument("--conf", type=float, default=DEFAULT_DASHBOARD_CONFIDENCE)
@@ -147,11 +162,21 @@ def main():
     parser.add_argument("--motion-upward-threshold", type=float, default=0.02)
     args = parser.parse_args()
 
+    # The dashboard uses a fixed two-camera layout: Camera 1 -> Zone G, Camera 2 -> Zone F.
+    args.cam = FIXED_PRIMARY_CAMERA_INDEX
+    args.camera_index = FIXED_PRIMARY_CAMERA_INDEX
+    args.camera_zone = FIXED_PRIMARY_CAMERA_ZONE
+
     model = None if args.test else load_inference_model(args.model)
     inference_device = "cpu" if args.test else prepare_model_for_inference(model)
     
     if not args.test:
         print(f"Hardware Check: Bound to {inference_device} on Jetson Orin Nano")
+        print(
+            "Camera Layout: "
+            f"{FIXED_PRIMARY_CAMERA_LABEL} -> index {FIXED_PRIMARY_CAMERA_INDEX} ({FIXED_PRIMARY_CAMERA_ZONE}), "
+            f"{FIXED_SECONDARY_CAMERA_LABEL} -> index {FIXED_SECONDARY_CAMERA_INDEX} ({FIXED_SECONDARY_CAMERA_ZONE})"
+        )
 
     config = DashboardConfig(
         model=model,
@@ -198,7 +223,7 @@ def main():
     alert_persist_worker.start()
 
     if not args.test:
-        worker = threading.Thread(target=camera_worker, args=(config, args.cam), daemon=True)
+        worker = threading.Thread(target=camera_worker, args=(config, config.camera_index), daemon=True)
         worker.start()
 
     camera_manager = CameraManager(
@@ -219,6 +244,12 @@ def main():
         allowed_class_names=runtime_inference_names,
     )
     config.camera_manager = camera_manager
+    secondary_start = camera_manager.add_camera(FIXED_SECONDARY_CAMERA_INDEX)
+    if not secondary_start.get("ok"):
+        print(
+            "Warning: secondary camera startup failed "
+            f"(index {FIXED_SECONDARY_CAMERA_INDEX}): {secondary_start.get('error', 'unknown error')}"
+        )
     server = ThreadingHTTPServer((args.host, args.port), StandaloneDashboardHandler)
     server.config = config
     server.camera_manager = camera_manager
