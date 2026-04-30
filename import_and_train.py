@@ -5,7 +5,7 @@ Workflow:
 1) Read a Roboflow YOLOv8 dataset directory.
 2) Rewrite every label class ID to the target class ID (default: 7 / soda_can).
 3) Copy images + remapped labels into training_data/dataset/images and labels.
-4) Fine-tune training_data/runs/accepted/weights/best.pt on the mixed dataset.
+4) Fine-tune training_data/runs/accepted/weights/best.pt on the mixed dataset (unless --merge-only is passed).
 """
 
 from __future__ import annotations
@@ -180,14 +180,7 @@ def _rewrite_label_to_target_class(
     label_dest: Path,
     target_class_id: int,
 ) -> tuple[Counter[int], int, int, list[str]]:
-    """Rewrite one label file to target class ID and return stats.
-
-    Returns:
-    - source class histogram
-    - mapped annotation count
-    - invalid line count
-    - preview lines
-    """
+    """Rewrite one label file to target class ID and return stats."""
     try:
         lines = label_source.read_text(encoding="utf-8").splitlines()
     except OSError as exc:
@@ -441,7 +434,7 @@ def _parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--project-root",
-        default="/home/user/DFX_Capstone",
+        default=str(Path(__file__).resolve().parent),
         help="Project root used to resolve relative paths",
     )
     parser.add_argument(
@@ -503,6 +496,13 @@ def _parse_args() -> argparse.Namespace:
         "--no-cpu-fallback",
         action="store_true",
         help="Disable retrying training on CPU when CUDA allocator errors occur",
+    )
+    
+    # NEW --merge-only flag added here
+    parser.add_argument(
+        "--merge-only",
+        action="store_true",
+        help="Merge the dataset and rewrite labels, but skip the training step.",
     )
     return parser.parse_args()
 
@@ -580,6 +580,11 @@ def main() -> int:
         "Verification passed: "
         f"all {checked_annotations} non-empty imported annotation lines now use class {target_class_id}"
     )
+
+    # NEW check to stop before training if --merge-only is used
+    if args.merge_only:
+        _log("Merge complete. Skipping training because --merge-only was passed.")
+        return 0
 
     runs_project_dir.mkdir(parents=True, exist_ok=True)
     best_path = _train_model(

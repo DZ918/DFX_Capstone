@@ -5,8 +5,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 if [[ -n "${DFX_PYTHON:-}" ]]; then
 	PYTHON_BIN="${DFX_PYTHON}"
-elif [[ -x "/home/user/dfx_env/bin/python" ]]; then
-	PYTHON_BIN="/home/user/dfx_env/bin/python"
+elif [[ -x "${SCRIPT_DIR}/dfx_env/bin/python" ]]; then
+	PYTHON_BIN="${SCRIPT_DIR}/dfx_env/bin/python"
+elif [[ -x "${HOME}/dfx_env/bin/python" ]]; then
+	PYTHON_BIN="${HOME}/dfx_env/bin/python"
 elif [[ -x "${SCRIPT_DIR}/.venv/bin/python" ]]; then
 	PYTHON_BIN="${SCRIPT_DIR}/.venv/bin/python"
 else
@@ -82,7 +84,7 @@ Usage:
   ./start_gpu.sh image <image-path> [additional main args]
 
 Defaults:
-  - Uses /home/user/dfx_env/bin/python when available
+  - Uses dfx_env/bin/python (in project dir or $HOME) when available
 	- Starts dashboard with Jetson-safe defaults for imgsz/FPS/JPEG and motion enabled
 	- Auto-prefers training_data/runs/accepted/weights/best.pt when it exists
 	- Reads DFX_DASHBOARD_MODEL_PATH, DFX_DASHBOARD_CONFIDENCE, and DFX_MOTION_ENABLED when set
