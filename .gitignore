@@ -9,3 +9,5 @@ __pycache__/
 training_data/
 snippets/
 alerts.json
+.env
+.env.local
