@@ -10,7 +10,10 @@ from uuid import uuid4
 
 from pathlib import Path
 
+from dfx.env import load_dotenv
 from dfx.gpu import configure_jetson_gpu_env, predict_with_fallback, prepare_model_for_inference
+
+load_dotenv()
 
 configure_jetson_gpu_env()
 

@@ -355,6 +355,23 @@ class CameraManager:
             preview = self._preview_cameras.get(int(camera_index))
         return preview
 
+    def snapshot_frames(self) -> list[dict]:
+        """Return one best-effort raw-frame snapshot per active auxiliary camera."""
+        with self._lock:
+            items = sorted(self._preview_cameras.items())
+        snapshots: list[dict] = []
+        for camera_index, preview in items:
+            frame = preview.get_frame()
+            if frame is None:
+                continue
+            snapshots.append(
+                {
+                    "camera_index": int(camera_index),
+                    "frame": frame,
+                }
+            )
+        return snapshots
+
     def update_runtime_detection_config(
         self,
         *,

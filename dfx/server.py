@@ -36,6 +36,13 @@ from dfx.alerts import (
     read_alerts,
     write_alerts,
 )
+from dfx.advanced_detection import (
+    acknowledge_advanced_detection,
+    advanced_detection_status_snapshot,
+    read_recent_advanced_detections,
+    run_advanced_detection_once,
+    snapshot_from_frame,
+)
 from dfx.camera import list_camera_devices
 from dfx.detection import make_placeholder_svg, make_random_alerts
 from dfx.settings import settings_snapshot, update_runtime_settings, reset_runtime_settings
@@ -94,6 +101,15 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if parsed.path == "/stats/consumption":
             self._send_consumption_stats()
             return
+        if parsed.path == "/advanced-detections":
+            params = parse_qs(parsed.query)
+            try:
+                limit = int(params.get("limit", [20])[0])
+            except ValueError:
+                limit = 20
+            limit = max(1, min(100, limit))
+            self._send_advanced_detections(limit)
+            return
         if parsed.path == "/map-image":
             self._send_map_image()
             return
@@ -110,6 +126,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path.startswith("/videos/"):
             self._send_video(parsed.path.removeprefix("/videos/"))
+            return
+        if parsed.path.startswith("/advanced-detections/assets/"):
+            self._send_advanced_detection_asset(
+                parsed.path.removeprefix("/advanced-detections/assets/")
+            )
             return
         if parsed.path == "/stream":
             params = parse_qs(parsed.query)
@@ -143,6 +164,12 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         if parsed.path == "/annotate":
             self._create_manual_annotation()
+            return
+        if parsed.path == "/advanced-detections/run-now":
+            self._run_advanced_detection_now()
+            return
+        if parsed.path == "/advanced-detections/ack":
+            self._acknowledge_advanced_detection()
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
@@ -446,6 +473,84 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 write_alerts(config.alert_log, alerts)
         self._send_json(build_consumption_stats(alerts), HTTPStatus.OK)
 
+    def _send_advanced_detections(self, limit: int):
+        """Return recent persisted OpenAI vision detections plus worker status."""
+        config: DashboardConfig = self.server.config
+        output_dir = str(getattr(config, "advanced_detection_output_dir", "")).strip()
+        payload = {
+            "status": advanced_detection_status_snapshot(config),
+            "detections": read_recent_advanced_detections(output_dir, limit=limit),
+        }
+        self._send_json(payload, HTTPStatus.OK)
+
+    def _run_advanced_detection_now(self):
+        """Run one on-demand advanced detection against the current primary frame."""
+        config: DashboardConfig = self.server.config
+        try:
+            source = self._resolve_camera_source(None)
+        except ValueError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        except LookupError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.NOT_FOUND)
+            return
+
+        frame = source.get("frame")
+        if frame is None:
+            self._send_json(
+                {"ok": False, "error": "No live frame available for advanced detection"},
+                HTTPStatus.SERVICE_UNAVAILABLE,
+            )
+            return
+
+        snapshot = snapshot_from_frame(int(source["camera_index"]), frame)
+        try:
+            detections = run_advanced_detection_once(
+                config,
+                [snapshot],
+                trigger_label="manual",
+                update_next_run=False,
+                block_if_busy=False,
+            )
+        except RuntimeError as exc:
+            error_text = str(exc)
+            status = HTTPStatus.CONFLICT if "already running" in error_text.lower() else HTTPStatus.BAD_REQUEST
+            self._send_json({"ok": False, "error": error_text}, status)
+            return
+        except Exception as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+
+        self._send_json({"ok": True, "detections": detections}, HTTPStatus.OK)
+
+    def _acknowledge_advanced_detection(self):
+        """Delete one persisted advanced-detection record and hide it from the dashboard."""
+        config: DashboardConfig = self.server.config
+        try:
+            payload = self._read_json_body()
+        except ValueError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        json_path = str(payload.get("json_path", "")).strip()
+        if not json_path:
+            self._send_json({"ok": False, "error": "Missing json_path"}, HTTPStatus.BAD_REQUEST)
+            return
+        try:
+            result = acknowledge_advanced_detection(
+                str(getattr(config, "advanced_detection_output_dir", "")).strip(),
+                json_path,
+            )
+        except FileNotFoundError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.NOT_FOUND)
+            return
+        except ValueError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.BAD_REQUEST)
+            return
+        except RuntimeError as exc:
+            self._send_json({"ok": False, "error": str(exc)}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        self._send_json({"ok": True, **result}, HTTPStatus.OK)
+
     def _trigger_train_accepted(self):
         """Start training on accepted snippets if the environment supports it."""
         config: DashboardConfig = self.server.config
@@ -621,6 +726,40 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 except (BrokenPipeError, ConnectionResetError):
                     break
                 remaining -= len(chunk)
+
+    def _send_advanced_detection_asset(self, encoded_path: str):
+        """Serve one persisted advanced-detection image or JSON sidecar."""
+        config: DashboardConfig = self.server.config
+        output_root = os.path.abspath(str(getattr(config, "advanced_detection_output_dir", "")))
+        if not output_root or not os.path.isdir(output_root):
+            self.send_error(HTTPStatus.NOT_FOUND, "Advanced detection storage is unavailable")
+            return
+        requested_path = unquote(encoded_path).lstrip("/")
+        asset_path = os.path.abspath(os.path.join(output_root, requested_path))
+        if not asset_path.startswith(f"{output_root}{os.sep}"):
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid advanced detection asset path")
+            return
+        if not os.path.exists(asset_path):
+            self.send_error(HTTPStatus.NOT_FOUND, "Advanced detection asset not found")
+            return
+        with open(asset_path, "rb") as handle:
+            body = handle.read()
+        content_type = "application/octet-stream"
+        lower = asset_path.lower()
+        if lower.endswith(".jpg") or lower.endswith(".jpeg"):
+            content_type = "image/jpeg"
+        elif lower.endswith(".png"):
+            content_type = "image/png"
+        elif lower.endswith(".webp"):
+            content_type = "image/webp"
+        elif lower.endswith(".json"):
+            content_type = "application/json; charset=utf-8"
+        self.send_response(HTTPStatus.OK)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
 
     def _stream_mjpeg(self):
         """Stream the latest annotated frame as multipart MJPEG for the browser <img> tag."""

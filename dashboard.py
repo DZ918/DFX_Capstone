@@ -9,6 +9,10 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 
+from dfx.env import load_dotenv
+
+load_dotenv()
+
 # Import the modular architecture to prevent code duplication
 from dfx.gpu import (
     configure_jetson_gpu_env,
@@ -19,6 +23,7 @@ from dfx.gpu import (
 )
 from dfx.camera import camera_worker
 from dfx.alerts import append_alert, create_alert
+from dfx.advanced_detection import advanced_detection_worker, configure_advanced_detection
 from dfx.multicam import CameraManager
 from dfx.model_loader import load_inference_model
 from dfx.server import DashboardHandler, HTML_PAGE as DASHBOARD_HTML_PAGE
@@ -191,11 +196,16 @@ def main():
     config.alert_queue = queue.Queue(maxsize=3)
     config.alert_worker_last_error = ""
     config.alert_jobs_dropped = 0
+    config.advanced_detection_lock = threading.Lock()
+    config.advanced_detection_run_lock = threading.Lock()
+    configure_advanced_detection(config, test_mode=args.test)
 
     frame_relay_worker = threading.Thread(target=_frame_relay_worker, args=(config,), daemon=True)
     frame_relay_worker.start()
     alert_persist_worker = threading.Thread(target=_alert_persist_worker, args=(config,), daemon=True)
     alert_persist_worker.start()
+    advanced_worker = threading.Thread(target=advanced_detection_worker, args=(config,), daemon=True)
+    advanced_worker.start()
 
     if not args.test:
         worker = threading.Thread(target=camera_worker, args=(config, args.cam), daemon=True)

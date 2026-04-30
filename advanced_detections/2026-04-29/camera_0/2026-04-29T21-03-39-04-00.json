@@ -1,0 +1,42 @@
+{
+  "camera_id": "camera_0",
+  "timestamp": "2026-04-29T21:03:39-04:00",
+  "image_width": 1920,
+  "image_height": 1080,
+  "advanced_detection_present": true,
+  "items": [
+    {
+      "type": "unknown",
+      "food_type": "candy_wrapper",
+      "description": "Hand holding a yellow M&M's candy wrapper.",
+      "bbox": {
+        "x1": 1398,
+        "y1": 2,
+        "x2": 1517,
+        "y2": 172
+      },
+      "confidence": 0.95,
+      "reason": "Clear M&M's branded candy wrapper visible in hand"
+    }
+  ],
+  "subjects": [
+    {
+      "description": "Person holding the candy wrapper with hand raised near face.",
+      "bbox": {
+        "x1": 1384,
+        "y1": 0,
+        "x2": 1528,
+        "y2": 190
+      },
+      "confidence": 0.85,
+      "related_items": [
+        0
+      ]
+    }
+  ],
+  "overall_summary": "The image shows a person holding a yellow M&M's candy wrapper, indicating presence of packaged food (candy wrapper). No drinks or eating/drinking behavior detected.",
+  "api_error": "",
+  "image_path": "2026-04-29/camera_0/2026-04-29T21-03-39-04-00.jpg",
+  "annotated_image_path": "2026-04-29/camera_0/2026-04-29T21-03-39-04-00_annotated.jpg",
+  "json_path": "2026-04-29/camera_0/2026-04-29T21-03-39-04-00.json"
+}

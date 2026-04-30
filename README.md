@@ -46,6 +46,38 @@ On Jetson you can also run:
 ./run_dashboard.sh
 ```
 
+## Advanced Detection
+
+The dashboard can run a periodic OpenAI Vision pass in the background while YOLO
+continues handling the realtime stream.
+
+This repo now auto-loads a local `.env` file when `dashboard.py` or `main.py`
+starts. The fastest setup is:
+
+```bash
+cp .env.example .env
+```
+
+Then edit `.env` and set your real API key.
+
+If you prefer shell exports instead, these are the same variables:
+
+```bash
+export OPENAI_API_KEY=...
+export ADVANCED_DETECTION_ENABLED=true
+export ADVANCED_DETECTION_INTERVAL_SECONDS=300
+export ADVANCED_DETECTION_MODEL=gpt-4.1-mini
+export ADVANCED_DETECTION_OUTPUT_DIR=advanced_detections
+```
+
+Each run captures one frame from the primary camera plus each active auxiliary
+camera, stores the raw frame and JSON sidecar under:
+
+```bash
+advanced_detections/YYYY-MM-DD/camera_id/timestamp.jpg
+advanced_detections/YYYY-MM-DD/camera_id/timestamp.json
+```
+
 If you only want the webcam detector instead of the browser dashboard:
 
 ```bash

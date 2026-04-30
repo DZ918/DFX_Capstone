@@ -181,6 +181,7 @@
       .annotate-btn:hover { background: #e0e0e0; }
       h2 { margin: 8px 0 12px; font-size: 16px; }
       .alerts-card { display: flex; flex-direction: column; }
+      .advanced-card { grid-column: 1 / -1; display: grid; gap: 12px; }
       .alerts-toolbar {
         display: flex;
         align-items: center;
@@ -246,11 +247,173 @@
         padding-right: 4px;
       }
       .alerts-list { display: grid; gap: 10px; }
+      .alert.alert-advanced {
+        border-color: #99f6e4;
+        background: linear-gradient(180deg, #f0fdfa 0%, #ffffff 100%);
+        box-shadow: 0 10px 24px rgba(13, 148, 136, 0.08);
+      }
+      .advanced-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      .advanced-toolbar-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .advanced-meta {
+        font-size: 12px;
+        color: #475569;
+      }
+      .advanced-countdown {
+        font-size: 12px;
+        color: #0f766e;
+        font-weight: 600;
+      }
+      .advanced-inline-controls {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+      .advanced-inline-controls .error {
+        margin-top: 0;
+        min-height: 0;
+      }
+      .advanced-run-btn {
+        border: 0;
+        border-radius: 8px;
+        padding: 7px 11px;
+        font-size: 12px;
+        color: #fff;
+        background: #0f766e;
+        cursor: pointer;
+      }
+      .advanced-run-btn:hover {
+        background: #115e59;
+      }
+      .advanced-run-btn:disabled {
+        opacity: 0.6;
+        cursor: wait;
+      }
+      .advanced-status {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border-radius: 999px;
+        padding: 5px 10px;
+        font-size: 12px;
+        font-weight: 700;
+        background: #d9f8f6;
+        color: #0f766e;
+      }
+      .advanced-status.is-error {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .advanced-status.is-disabled {
+        background: #e2e8f0;
+        color: #475569;
+      }
+      .advanced-detections-list {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 12px;
+      }
+      .advanced-detection {
+        border: 1px solid #99f6e4;
+        border-radius: 12px;
+        background: linear-gradient(180deg, #f0fdfa 0%, #ffffff 100%);
+        overflow: hidden;
+      }
+      .advanced-detection-image {
+        width: 100%;
+        height: 220px;
+        object-fit: cover;
+        display: block;
+        background: #cbd5e1;
+      }
+      .advanced-detection-body {
+        display: grid;
+        gap: 10px;
+        padding: 12px;
+      }
+      .advanced-detection-head {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .advanced-detection-title {
+        font-size: 14px;
+        font-weight: 700;
+        color: #0f172a;
+      }
+      .advanced-detection-time {
+        font-size: 12px;
+        color: #475569;
+      }
+      .advanced-badge {
+        display: inline-block;
+        border-radius: 999px;
+        padding: 3px 9px;
+        font-size: 11px;
+        font-weight: 700;
+        background: #ccfbf1;
+        color: #115e59;
+      }
+      .advanced-badge.is-error {
+        background: #fee2e2;
+        color: #991b1b;
+      }
+      .advanced-summary {
+        font-size: 13px;
+        color: #0f172a;
+      }
+      .advanced-items {
+        display: grid;
+        gap: 8px;
+      }
+      .advanced-item {
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: #ffffff;
+        padding: 9px 10px;
+      }
+      .advanced-item-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        font-size: 12px;
+        color: #0f172a;
+      }
+      .advanced-item-type {
+        font-weight: 700;
+      }
+      .advanced-item-desc,
+      .advanced-item-reason,
+      .advanced-item-bbox,
+      .advanced-item-error {
+        font-size: 12px;
+        color: #475569;
+      }
+      .advanced-item-error {
+        color: #991b1b;
+      }
+      .advanced-inline-grid {
+        display: grid;
+        gap: 8px;
+      }
       .alert { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: #fff; }
       .alert-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
       .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
       .status-new { background: var(--new-bg); color: var(--new-fg); }
       .status-accepted { background: var(--accepted-bg); color: var(--accepted-fg); }
+      .status-advanced { background: #ccfbf1; color: #115e59; }
       .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
       .det-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-bottom: 10px; }
       .det-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fafafa; }
@@ -624,6 +787,10 @@
             <input type="checkbox" id="setDetectionEnabled" />
             Detection enabled
           </label>
+          <label class="settings-toggle">
+            <input type="checkbox" id="setAdvancedDetectionEnabled" />
+            Advanced detection
+          </label>
           <div class="settings-row">
             <label class="settings-field">Confidence
               <input id="setConf" type="number" min="0.01" max="1" step="0.01" />
@@ -700,6 +867,20 @@
               </select>
             </label>
           </div>
+          <div class="settings-row">
+            <label class="settings-field">Advanced interval (s)
+              <input id="setAdvancedDetectionIntervalSeconds" type="number" min="30" max="86400" step="1" />
+            </label>
+            <label class="settings-field">Advanced model
+              <input id="setAdvancedDetectionModel" type="text" maxlength="128" placeholder="gpt-4.1-mini" />
+            </label>
+          </div>
+          <div class="settings-row">
+            <label class="settings-field">Advanced output folder
+              <input id="setAdvancedDetectionOutputDir" type="text" maxlength="512" placeholder="advanced_detections" />
+            </label>
+            <div></div>
+          </div>
           <div class="settings-actions">
             <button type="submit">Apply settings</button>
             <button id="resetSettings" type="button" class="alt">Reset defaults</button>
@@ -737,8 +918,15 @@
               <img id="feedImg" class="feed" src="/stream" alt="Live camera feed" />
             </div>
             <div class="camera-panel-actions">
-              <div class="camera-panel-meta">Primary feed supports live alerts, manual annotation, and training export.</div>
+              <div class="advanced-inline-controls">
+                <div class="camera-panel-meta">Primary feed supports live alerts, manual annotation, training export, and OpenAI advanced verification.</div>
+                <div id="advancedMeta" class="advanced-meta">OpenAI Vision verification for packaged food, wrappers, drinks, and ambiguous items.</div>
+                <div id="advancedCountdown" class="advanced-countdown"></div>
+                <div id="advancedError" class="error"></div>
+              </div>
               <div class="camera-panel-tools">
+                <button id="advancedRunNowBtn" class="advanced-run-btn" type="button">Perform advanced detection</button>
+                <span id="advancedStatus" class="advanced-status is-disabled">Loading...</span>
                 <button id="primaryAnnotateBtn" class="camera-action-btn" type="button">Annotate</button>
               </div>
             </div>
@@ -948,6 +1136,7 @@
                 const zoomOutBtn = document.getElementById('zoomOutBtn');
                 const zoomResetBtn = document.getElementById('zoomResetBtn');
         const alertsPanel = document.getElementById('alertsPanel');
+        const advancedPanel = document.getElementById('advancedDetections');
         const staleAlertModal = document.getElementById('staleAlertModal');
                 const minZoom = 0.5;
                 const maxZoom = 5.0;
@@ -995,6 +1184,7 @@
         }
 
         bindExpandableImageClicks(alertsPanel);
+        bindExpandableImageClicks(advancedPanel);
         bindExpandableImageClicks(staleAlertModal);
         closeBtn.addEventListener('click', closeLightbox);
                 zoomInBtn.addEventListener('click', () => setZoom(zoom + 0.25));
@@ -1537,6 +1727,7 @@
       function applySettingsToForm(settings) {
         document.getElementById('setCameraEnabled').checked = Boolean(settings.camera_enabled);
         document.getElementById('setDetectionEnabled').checked = Boolean(settings.detection_enabled);
+        document.getElementById('setAdvancedDetectionEnabled').checked = Boolean(settings.advanced_detection_enabled);
         document.getElementById('setConf').value = Number(settings.conf || 0.55).toFixed(2);
         document.getElementById('setIou').value = Number(settings.iou || 0.40).toFixed(2);
         document.getElementById('setPersistFrames').value = Number(settings.persist_frames || 5);
@@ -1552,6 +1743,9 @@
         document.getElementById('setMotionHoldSeconds').value = Number(settings.motion_hold_seconds || 0.1).toFixed(1);
         document.getElementById('setCameraIndex').value = String(Number(settings.camera_index || 0));
         document.getElementById('setCameraZone').value = settings.camera_zone || 'Zone A';
+        document.getElementById('setAdvancedDetectionIntervalSeconds').value = Number(settings.advanced_detection_interval_seconds || 300).toFixed(0);
+        document.getElementById('setAdvancedDetectionModel').value = settings.advanced_detection_model || 'gpt-4.1-mini';
+        document.getElementById('setAdvancedDetectionOutputDir').value = settings.advanced_detection_output_dir || 'advanced_detections';
       }
 
       function readNumberField(id, label) {
@@ -1567,6 +1761,7 @@
         return {
           camera_enabled: document.getElementById('setCameraEnabled').checked,
           detection_enabled: document.getElementById('setDetectionEnabled').checked,
+          advanced_detection_enabled: document.getElementById('setAdvancedDetectionEnabled').checked,
           conf: readNumberField('setConf', 'confidence'),
           iou: readNumberField('setIou', 'IoU'),
           persist_frames: Math.round(readNumberField('setPersistFrames', 'persist frames')),
@@ -1582,6 +1777,11 @@
           motion_hold_seconds: readNumberField('setMotionHoldSeconds', 'motion hold seconds'),
           camera_index: Math.round(readNumberField('setCameraIndex', 'webcam device')),
           camera_zone: document.getElementById('setCameraZone').value,
+          advanced_detection_interval_seconds: Math.round(
+            readNumberField('setAdvancedDetectionIntervalSeconds', 'advanced interval')
+          ),
+          advanced_detection_model: document.getElementById('setAdvancedDetectionModel').value.trim(),
+          advanced_detection_output_dir: document.getElementById('setAdvancedDetectionOutputDir').value.trim(),
         };
       }
 
@@ -1713,10 +1913,39 @@
       let lastAlertsFingerprint = '';
       let refreshInFlight = false;
       let cachedOrderedAlerts = [];
+      let cachedAdvancedDetections = [];
+      let cachedAdvancedStatus = {};
       const ALERTS_FETCH_LIMIT = 0;
+      const ADVANCED_FETCH_LIMIT = 18;
+      let lastAdvancedFingerprint = '';
+      let advancedRunInFlight = false;
+
+      function normalizeAdvancedDetectionsForAlerts(detections) {
+        return (Array.isArray(detections) ? detections : []).map((detection) => ({
+          id: `advanced:${detection.camera_id || 'camera'}:${detection.timestamp || ''}`,
+          status: 'advanced',
+          zone: detection.camera_id || 'Advanced',
+          advanced_detection: true,
+          advanced_payload: detection,
+          timestamp: detection.timestamp || '',
+        }));
+      }
+
+      function combinedActiveAlerts() {
+        const regularActive = cachedOrderedAlerts.filter((alert) => (alert.status || 'new') !== 'accepted');
+        const advancedAlerts = normalizeAdvancedDetectionsForAlerts(cachedAdvancedDetections);
+        return [...advancedAlerts, ...regularActive].sort((a, b) => {
+          const aTs = Date.parse(String(a.timestamp || '')) || 0;
+          const bTs = Date.parse(String(b.timestamp || '')) || 0;
+          return bTs - aTs;
+        });
+      }
 
       // Alert cards are rebuilt from API data on every meaningful refresh.
       function renderAlertCard(alert, errorEl) {
+        if (alert && alert.advanced_detection) {
+          return renderAdvancedAlertCard(alert.advanced_payload || {}, errorEl);
+        }
         const detections = Array.isArray(alert.detections) ? alert.detections : [];
         const zone = alert.zone || (detections[0] && detections[0].zone) || '';
         const status = alert.status || 'new';
@@ -1761,6 +1990,47 @@
               errorEl.textContent = 'Could not update alert. Try again.';
             } finally {
               btn.disabled = false;
+            }
+          });
+        });
+        return item;
+      }
+
+      function renderAdvancedAlertCard(detection, errorEl) {
+        const items = Array.isArray(detection.items) ? detection.items : [];
+        const imageUrl = detection.annotated_image_url || detection.image_url || '';
+        const item = document.createElement('article');
+        item.className = 'alert alert-advanced';
+        const zoneTag = detection.camera_id ? ` | ${detection.camera_id}` : '';
+        const imageMarkup = imageUrl
+          ? `<div class="alert-video-wrap">` +
+              `<img class="alert-video expandable" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(detection.camera_id || 'advanced detection frame')}" loading="lazy" />` +
+              `<div class="det-label">Advanced annotated frame</div>` +
+            `</div>`
+          : '';
+        const details = items.length > 0
+          ? `<div class="advanced-inline-grid">${items.map(renderAdvancedItem).join('')}</div>`
+          : `<div class="empty-note">${escapeHtml(detection.api_error || 'No advanced items detected in this frame.')}</div>`;
+        const controls = detection.json_path
+          ? `<div class="actions"><button data-advanced-action="ack">Acknowledge</button></div>`
+          : '';
+        item.innerHTML =
+          `<div class="alert-head"><span class="badge status-advanced">advanced</span>` +
+          `<span>${escapeHtml(detection.timestamp || 'unknown time')}</span></div>` +
+          `<div class="meta">${items.length} detection(s)${escapeHtml(zoneTag)} | advanced vision verification</div>` +
+          imageMarkup +
+          `<div class="advanced-summary">${escapeHtml(detection.overall_summary || '')}</div>` +
+          details +
+          controls;
+        item.querySelectorAll('button[data-advanced-action="ack"]').forEach((button) => {
+          button.addEventListener('click', async () => {
+            try {
+              button.disabled = true;
+              await acknowledgeAdvancedDetection(detection.json_path || '');
+            } catch (err) {
+              errorEl.textContent = err.message || 'Could not acknowledge advanced detection.';
+            } finally {
+              button.disabled = false;
             }
           });
         });
@@ -1816,7 +2086,7 @@
         const acceptedCount = document.getElementById('acceptedCount');
         const newCount = document.getElementById('newCount');
         const acceptedSection = document.getElementById('acceptedSection');
-        const activeAlerts = orderedAlerts.filter((alert) => (alert.status || 'new') !== 'accepted');
+        const activeAlerts = combinedActiveAlerts();
         const acceptedAlerts = orderedAlerts.filter((alert) => (alert.status || 'new') === 'accepted');
 
         renderAlertsInto(activeList, activeAlerts, errorEl, 'No active alerts right now.');
@@ -1894,6 +2164,207 @@
                     updatedEl.textContent = 'Could not load backend counts right now.';
                 }
             }
+
+      function advancedFingerprint(payload) {
+        const detections = Array.isArray(payload && payload.detections) ? payload.detections : [];
+        const status = payload && payload.status ? payload.status : {};
+        const detectionKey = detections.map((detection) => {
+          const items = Array.isArray(detection.items) ? detection.items : [];
+          return [
+            detection.camera_id || '',
+            detection.timestamp || '',
+            detection.annotated_image_path || '',
+            detection.api_error || '',
+            items.map((item) => `${item.type || ''}:${item.food_type || ''}:${item.confidence || ''}`).join('|')
+          ].join('::');
+        }).join('||');
+        return [
+          detectionKey,
+          status.last_completed_at || '',
+          status.last_error || '',
+          status.message || '',
+          String(Boolean(status.running)),
+          String(Boolean(status.enabled))
+        ].join('###');
+      }
+
+      function setAdvancedStatus(status) {
+        const badge = document.getElementById('advancedStatus');
+        const meta = document.getElementById('advancedMeta');
+        badge.className = 'advanced-status';
+        if (!status || !status.enabled) {
+          badge.classList.add('is-disabled');
+          badge.textContent = 'Disabled';
+          meta.textContent = 'Set ADVANCED_DETECTION_ENABLED=true and OPENAI_API_KEY to enable periodic OpenAI Vision checks.';
+          return;
+        }
+        if (status.last_error) {
+          badge.classList.add('is-error');
+          badge.textContent = 'API error';
+        } else if (status.running) {
+          badge.textContent = 'Running';
+        } else {
+          badge.textContent = 'Active';
+        }
+        const interval = Number(status.interval_seconds || 300);
+        const model = status.model || 'model not set';
+        const lastRun = status.last_completed_at || status.last_started_at || 'waiting';
+        const note = status.message || 'Idle';
+        meta.textContent = `Model: ${model} | Interval: ${interval}s | Last run: ${lastRun} | ${note}`;
+      }
+
+      function formatCountdownSeconds(totalSeconds) {
+        const safe = Math.max(0, Math.floor(totalSeconds));
+        const minutes = Math.floor(safe / 60);
+        const seconds = safe % 60;
+        return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      }
+
+      function updateAdvancedCountdown() {
+        const countdownEl = document.getElementById('advancedCountdown');
+        const status = cachedAdvancedStatus || {};
+        if (!status.enabled) {
+          countdownEl.textContent = '';
+          return;
+        }
+        if (status.running) {
+          countdownEl.textContent = 'Next scheduled advanced detection: running now';
+          return;
+        }
+        const nextRunAt = Number(status.next_run_at || 0);
+        if (!Number.isFinite(nextRunAt) || nextRunAt <= 0) {
+          countdownEl.textContent = 'Next scheduled advanced detection: waiting';
+          return;
+        }
+        const remainingSeconds = Math.max(0, nextRunAt - (Date.now() / 1000));
+        countdownEl.textContent = `Next scheduled advanced detection in ${formatCountdownSeconds(remainingSeconds)}`;
+      }
+
+      function renderAdvancedItem(item) {
+        const bbox = item && item.bbox ? item.bbox : {};
+        const confidence = Number(item && item.confidence ? item.confidence : 0).toFixed(2);
+        return `<div class="advanced-item">` +
+          `<div class="advanced-item-top">` +
+            `<span class="advanced-item-type">${escapeHtml(item.food_type || item.type || 'unknown')}</span>` +
+            `<span>${escapeHtml(item.type || 'unknown')} | ${confidence}</span>` +
+          `</div>` +
+          `<div class="advanced-item-desc">${escapeHtml(item.description || '')}</div>` +
+          `<div class="advanced-item-bbox">bbox: (${Number(bbox.x1 || 0)}, ${Number(bbox.y1 || 0)}, ${Number(bbox.x2 || 0)}, ${Number(bbox.y2 || 0)})</div>` +
+          `<div class="advanced-item-reason">${escapeHtml(item.reason || '')}</div>` +
+        `</div>`;
+      }
+
+      function renderAdvancedDetectionCard(detection) {
+        const items = Array.isArray(detection.items) ? detection.items : [];
+        const itemMarkup = items.length
+          ? items.map(renderAdvancedItem).join('')
+          : `<div class="advanced-item"><div class="advanced-item-error">${escapeHtml(detection.api_error || 'No advanced items detected in this frame.')}</div></div>`;
+        const imageUrl = detection.annotated_image_url || detection.image_url || '';
+        const imageMarkup = imageUrl
+          ? `<img class="advanced-detection-image expandable" src="${escapeHtml(imageUrl)}" alt="${escapeHtml(detection.camera_id || 'advanced detection frame')}" loading="lazy" />`
+          : `<div class="det-empty" style="height:220px;">No frame saved</div>`;
+        const badgeClass = detection.api_error ? 'advanced-badge is-error' : 'advanced-badge';
+        const badgeText = detection.api_error
+          ? 'API error'
+          : (detection.advanced_detection_present ? 'Detected' : 'No items');
+        const card = document.createElement('article');
+        card.className = 'advanced-detection';
+        card.innerHTML =
+          imageMarkup +
+          `<div class="advanced-detection-body">` +
+            `<div class="advanced-detection-head">` +
+              `<div>` +
+                `<div class="advanced-detection-title">${escapeHtml(detection.camera_id || 'camera')}</div>` +
+                `<div class="advanced-detection-time">${escapeHtml(detection.timestamp || 'unknown time')}</div>` +
+              `</div>` +
+              `<span class="${badgeClass}">${escapeHtml(badgeText)}</span>` +
+            `</div>` +
+            `<div class="advanced-summary">${escapeHtml(detection.overall_summary || '')}</div>` +
+            `<div class="advanced-items">${itemMarkup}</div>` +
+          `</div>`;
+        return card;
+      }
+
+      function renderAdvancedDetections(payload) {
+        const errorEl = document.getElementById('advancedError');
+        const detections = Array.isArray(payload && payload.detections) ? payload.detections : [];
+        const status = payload && payload.status ? payload.status : {};
+        cachedAdvancedDetections = detections;
+        cachedAdvancedStatus = status;
+        errorEl.textContent = status.last_error || '';
+        setAdvancedStatus(status);
+        updateAdvancedCountdown();
+      }
+
+      async function refreshAdvancedDetections() {
+        try {
+          const res = await fetch(`/advanced-detections?limit=${ADVANCED_FETCH_LIMIT}`);
+          if (!res.ok) {
+            throw new Error(await readApiError(res));
+          }
+          const payload = await res.json();
+          const fingerprint = advancedFingerprint(payload || {});
+          cachedAdvancedDetections = Array.isArray(payload && payload.detections) ? payload.detections : [];
+          cachedAdvancedStatus = payload && payload.status ? payload.status : {};
+          if (fingerprint === lastAdvancedFingerprint) {
+            updateAdvancedCountdown();
+            return;
+          }
+          lastAdvancedFingerprint = fingerprint;
+          renderAdvancedDetections(payload || {});
+          renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
+        } catch (err) {
+          document.getElementById('advancedError').textContent = err.message || 'Could not load advanced detections.';
+        }
+      }
+
+      async function triggerAdvancedDetectionNow() {
+        if (advancedRunInFlight) {
+          return;
+        }
+        advancedRunInFlight = true;
+        const button = document.getElementById('advancedRunNowBtn');
+        const errorEl = document.getElementById('advancedError');
+        const previousLabel = button.textContent;
+        button.disabled = true;
+        button.textContent = 'Running...';
+        errorEl.textContent = '';
+        try {
+          const res = await fetch('/advanced-detections/run-now', {
+            method: 'POST',
+          });
+          if (!res.ok) {
+            throw new Error(await readApiError(res));
+          }
+          await res.json();
+          lastAdvancedFingerprint = '';
+          await refreshAdvancedDetections();
+        } catch (err) {
+          errorEl.textContent = err.message || 'Could not run advanced detection.';
+        } finally {
+          button.disabled = false;
+          button.textContent = previousLabel;
+          advancedRunInFlight = false;
+        }
+      }
+
+      async function acknowledgeAdvancedDetection(jsonPath) {
+        const res = await fetch('/advanced-detections/ack', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ json_path: jsonPath }),
+        });
+        if (!res.ok) {
+          throw new Error(await readApiError(res));
+        }
+        lastAdvancedFingerprint = '';
+        await refreshAdvancedDetections();
+      }
+
+      function setupAdvancedDetectionActions() {
+        const button = document.getElementById('advancedRunNowBtn');
+        button.addEventListener('click', triggerAdvancedDetectionNow);
+      }
 
       document.getElementById('groupAlertsByZone').addEventListener('change', () => {
         renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
@@ -2177,14 +2648,18 @@
       setupSettingsPanel();
       setupSettingsForm();
       setupCameraManager();
+      setupAdvancedDetectionActions();
           setupStaleAlertModal();
       setupAnnotation();
       refreshAlerts();
+    refreshAdvancedDetections();
     refreshConsumptionStats();
       refreshTrainStatus();
       setInterval(refreshActiveCameras, 3000);
       setInterval(refreshAlerts, 2000);
-    setInterval(refreshConsumptionStats, 5000);
+      setInterval(refreshAdvancedDetections, 5000);
+      setInterval(updateAdvancedCountdown, 1000);
+      setInterval(refreshConsumptionStats, 5000);
       setInterval(refreshTrainStatus, 5000);
     </script>
   </body>

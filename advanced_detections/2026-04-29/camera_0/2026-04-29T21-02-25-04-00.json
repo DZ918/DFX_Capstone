@@ -1,0 +1,42 @@
+{
+  "camera_id": "camera_0",
+  "timestamp": "2026-04-29T21:02:25-04:00",
+  "image_width": 1920,
+  "image_height": 1080,
+  "advanced_detection_present": true,
+  "items": [
+    {
+      "type": "unknown",
+      "food_type": "lays",
+      "description": "A person sitting on a bench is holding a bag of Lays potato chips.",
+      "bbox": {
+        "x1": 1235,
+        "y1": 680,
+        "x2": 1340,
+        "y2": 720
+      },
+      "confidence": 0.85,
+      "reason": "The green and white bag with visible Lays brand label matches Lays packaging."
+    }
+  ],
+  "subjects": [
+    {
+      "description": "Person sitting on bench holding a bag of Lays chips close to face.",
+      "bbox": {
+        "x1": 1200,
+        "y1": 620,
+        "x2": 1400,
+        "y2": 750
+      },
+      "confidence": 0.9,
+      "related_items": [
+        0
+      ]
+    }
+  ],
+  "overall_summary": "One visible food item detected: a bag of Lays chips held by a person exhibiting eating behavior.",
+  "api_error": "",
+  "image_path": "2026-04-29/camera_0/2026-04-29T21-02-25-04-00.jpg",
+  "annotated_image_path": "2026-04-29/camera_0/2026-04-29T21-02-25-04-00_annotated.jpg",
+  "json_path": "2026-04-29/camera_0/2026-04-29T21-02-25-04-00.json"
+}

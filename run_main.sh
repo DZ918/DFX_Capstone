@@ -10,7 +10,7 @@ else
 	PYTHON_BIN="python3"
 fi
 
-GPU_LIB_PATHS="$($PYTHON_BIN - <<'PY'
+GPU_LIB_PATHS="$("$PYTHON_BIN" - <<'PY'
 import os
 from pathlib import Path
 import site

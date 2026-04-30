@@ -49,6 +49,16 @@ def clamp_int(value, field_name: str, minimum: int, maximum: int) -> int:
     return max(minimum, min(maximum, numeric))
 
 
+def normalize_text(value, field_name: str, *, allow_empty: bool = False, maximum_length: int = 256) -> str:
+    """Validate a generic short text setting."""
+    text = str(value).strip()
+    if not text and not allow_empty:
+        raise ValueError(f"Invalid value for '{field_name}'")
+    if len(text) > maximum_length:
+        raise ValueError(f"Value for '{field_name}' is too long")
+    return text
+
+
 def settings_snapshot(config) -> dict:
     """Return the live runtime settings exposed to the dashboard."""
     with config.settings_lock:
@@ -70,6 +80,14 @@ def settings_snapshot(config) -> dict:
             "motion_hold_seconds": float(config.motion_hold_seconds),
             "camera_index": int(config.camera_index),
             "camera_zone": str(config.camera_zone),
+            "advanced_detection_enabled": bool(getattr(config, "advanced_detection_enabled", False)),
+            "advanced_detection_interval_seconds": int(
+                getattr(config, "advanced_detection_interval_seconds", 300)
+            ),
+            "advanced_detection_model": str(getattr(config, "advanced_detection_model", "")),
+            "advanced_detection_output_dir": str(
+                getattr(config, "advanced_detection_output_dir", "advanced_detections")
+            ),
             "updated_at": config.settings_updated_at,
             "test_mode": bool(config.test_mode),
         }
@@ -127,6 +145,34 @@ def update_runtime_settings(config, payload: dict) -> dict:
             config.camera_index = clamp_int(payload["camera_index"], "camera_index", 0, 32)
         if "camera_zone" in payload:
             config.camera_zone = normalize_camera_zone(payload["camera_zone"])
+        if "advanced_detection_enabled" in payload:
+            config.advanced_detection_enabled = parse_bool(
+                payload["advanced_detection_enabled"], "advanced_detection_enabled"
+            )
+            config.advanced_detection_next_run_at = 0.0
+        if "advanced_detection_interval_seconds" in payload:
+            config.advanced_detection_interval_seconds = clamp_int(
+                payload["advanced_detection_interval_seconds"],
+                "advanced_detection_interval_seconds",
+                30,
+                86400,
+            )
+            config.advanced_detection_next_run_at = 0.0
+        if "advanced_detection_model" in payload:
+            config.advanced_detection_model = normalize_text(
+                payload["advanced_detection_model"],
+                "advanced_detection_model",
+                maximum_length=128,
+            )
+            config.advanced_detection_next_run_at = 0.0
+        if "advanced_detection_output_dir" in payload:
+            config.advanced_detection_output_dir = os.path.abspath(
+                normalize_text(
+                    payload["advanced_detection_output_dir"],
+                    "advanced_detection_output_dir",
+                    maximum_length=512,
+                )
+            )
         config.settings_updated_at = datetime.now().isoformat(timespec="seconds")
     return settings_snapshot(config)
 
@@ -233,6 +279,14 @@ class DashboardConfig:
             "camera_index": int(camera_index),
             "camera_zone": self.camera_zone,
             "motion_enabled": bool(motion_enabled),
+            "advanced_detection_enabled": bool(getattr(self, "advanced_detection_enabled", False)),
+            "advanced_detection_interval_seconds": int(
+                getattr(self, "advanced_detection_interval_seconds", 300)
+            ),
+            "advanced_detection_model": str(getattr(self, "advanced_detection_model", "")),
+            "advanced_detection_output_dir": str(
+                getattr(self, "advanced_detection_output_dir", "advanced_detections")
+            ),
         }
         self.stop = False
         self.consecutive = 0
