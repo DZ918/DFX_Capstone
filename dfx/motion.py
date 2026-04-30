@@ -59,20 +59,38 @@ _INDEX_FINGER_TIP_INDEX = 8
 
 def _extract_detection_geometry(det: dict) -> tuple[float, float, float] | None:
     """Return center and diagonal size for a detection, or None when incomplete."""
-    center = det.get("center_xy")
     bbox = det.get("bbox_xyxy")
-    if not isinstance(center, (list, tuple)) or len(center) != 2:
-        return None
     if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
         return None
     try:
-        x = float(center[0])
-        y = float(center[1])
         x1, y1, x2, y2 = (float(value) for value in bbox)
     except (TypeError, ValueError):
         return None
-    box_diag = math.hypot(max(1.0, x2 - x1), max(1.0, y2 - y1))
-    return x, y, box_diag
+    width = max(1.0, x2 - x1)
+    height = max(1.0, y2 - y1)
+    bbox_center_x = x1 + (width * 0.5)
+    bbox_center_y = y1 + (height * 0.5)
+
+    # Top-down cameras can produce skewed/squashed boxes, so use a blended size metric
+    # instead of relying only on the diagonal.
+    box_diag = math.hypot(width, height)
+    box_area_side = math.sqrt(width * height)
+    box_scale = max(1.0, (box_area_side * 0.65) + (box_diag * 0.35))
+
+    center = det.get("center_xy")
+    if isinstance(center, (list, tuple)) and len(center) == 2:
+        try:
+            det_center_x = float(center[0])
+            det_center_y = float(center[1])
+        except (TypeError, ValueError):
+            det_center_x = bbox_center_x
+            det_center_y = bbox_center_y
+        x = (det_center_x * 0.6) + (bbox_center_x * 0.4)
+        y = (det_center_y * 0.6) + (bbox_center_y * 0.4)
+    else:
+        x, y = bbox_center_x, bbox_center_y
+
+    return x, y, box_scale
 
 
 def _consumption_track_key(class_name: str) -> str:
@@ -800,12 +818,12 @@ def detect_person_hand_to_mouth_proxy(
 
     trajectory_ready = (
         approach_delta_ratio >= HAND_MOUTH_MIN_APPROACH_DELTA_RATIO
-        and direction_cosine >= HAND_MOUTH_MIN_DIRECTION_COSINE
+        or direction_cosine >= HAND_MOUTH_MIN_DIRECTION_COSINE
     )
     within_threshold = closest_distance_ratio <= HAND_MOUTH_MAX_DISTANCE_RATIO
-    proximity_override = within_threshold
+    proximity_override = closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.08)
     if proximity_override or (
-        closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.40)
+        closest_distance_ratio <= (HAND_MOUTH_MAX_DISTANCE_RATIO * 1.65)
         and trajectory_ready
     ):
         config.person_proxy_last_approach_ts = now_ts
@@ -815,7 +833,7 @@ def detect_person_hand_to_mouth_proxy(
     ) <= HAND_MOUTH_APPROACH_WINDOW_SECONDS
 
     dwell_started_at = float(getattr(config, "person_proxy_dwell_started_at", 0.0))
-    threshold_for_reset = HAND_MOUTH_MAX_DISTANCE_RATIO * (1.12 if dwell_started_at > 0.0 else 1.0)
+    threshold_for_reset = HAND_MOUTH_MAX_DISTANCE_RATIO * (1.30 if dwell_started_at > 0.0 else 1.08)
     within_or_sticky = closest_distance_ratio <= threshold_for_reset
     if within_or_sticky:
         if dwell_started_at <= 0.0 and (recent_approach or proximity_override):

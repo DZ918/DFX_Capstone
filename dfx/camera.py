@@ -30,7 +30,6 @@ from dfx.constants import (
     FOOD_MOTION_CONFIRM_FRAMES,
     FOOD_MOTION_MIN_SCORE,
     FOOD_OCCLUSION_LOOKBACK_SECONDS,
-    HAND_TO_MOUTH_REQUIRED_EVENTS,
     HAND_TO_MOUTH_WINDOW_SECONDS,
     INFERENCE_CLASS_NAMES,
     MOTION_TRIGGER_SCORE,
@@ -408,8 +407,11 @@ def _persist_alert_synchronously(config, payload: dict):
         hand_to_mouth_source=payload["hand_to_mouth_source"],
         hand_to_mouth_event_count=payload["hand_to_mouth_event_count"],
         attach_video=payload["attach_video"],
+        video_required=payload.get("video_required", False),
         alert_reason=payload["alert_reason"],
     )
+    if alert is None:
+        return
     with config.alert_lock:
         append_alert(
             config.alert_log,
@@ -691,14 +693,17 @@ def camera_worker(config, cam_index: int):
                         )
                     )
 
-                    if hand_to_mouth_event_active and not config.last_motion_active:
+                    mediapipe_hand_to_mouth_event_active = (
+                        hand_to_mouth_event_active and motion_source == "person_proxy"
+                    )
+                    if mediapipe_hand_to_mouth_event_active and not config.last_motion_active:
                         config.motion_event_times.append(wall_now)
                     while (
                         config.motion_event_times
                         and (wall_now - config.motion_event_times[0]) > HAND_TO_MOUTH_WINDOW_SECONDS
                     ):
                         config.motion_event_times.popleft()
-                    config.last_motion_active = bool(hand_to_mouth_event_active)
+                    config.last_motion_active = bool(mediapipe_hand_to_mouth_event_active)
 
                     last_detections = detections
                     last_motion_detected = motion_detected
@@ -734,11 +739,14 @@ def camera_worker(config, cam_index: int):
             motion_burst_trigger = (
                 inference_ran
                 and hand_to_mouth_event_active
-                and len(config.motion_event_times) >= (
-                    PROXY_HAND_TO_MOUTH_REQUIRED_EVENTS
-                    if motion_source in {"person_proxy", "food_occluded"}
-                    else HAND_TO_MOUTH_REQUIRED_EVENTS
-                )
+                and motion_source == "person_proxy"
+                and len(config.motion_event_times) >= PROXY_HAND_TO_MOUTH_REQUIRED_EVENTS
+            )
+            hand_to_mouth_pending_sequence = (
+                inference_ran
+                and hand_to_mouth_event_active
+                and motion_source == "person_proxy"
+                and not motion_burst_trigger
             )
             stationary_followup_trigger = (
                 inference_ran
@@ -778,7 +786,8 @@ def camera_worker(config, cam_index: int):
             )
 
             should_alert = bool(motion_burst_trigger) or (
-                not same_person_suppressed
+                not hand_to_mouth_pending_sequence
+                and not same_person_suppressed
                 and (stationary_followup_trigger or initial_trigger or new_object_trigger)
             )
             if should_alert:
@@ -791,7 +800,7 @@ def camera_worker(config, cam_index: int):
                     reason = "stationary_followup"
 
                 payload_detections = deepcopy(primary_alert_detections)
-                if hand_to_mouth_event_active:
+                if motion_burst_trigger:
                     has_snippet_candidate = any(
                         float(det.get("confidence", 0.0)) >= ALERT_SNIPPET_CONFIDENCE_FLOOR
                         for det in payload_detections
@@ -808,8 +817,10 @@ def camera_worker(config, cam_index: int):
                         if marker is not None:
                             payload_detections.append(marker)
 
+                attach_video_for_alert = bool(motion_detected or motion_burst_trigger or hand_to_mouth_event_active)
+                video_required_for_alert = bool(motion_burst_trigger)
                 recent_frames_snapshot = list(recent_frames)
-                if motion_burst_trigger and len(recent_frames_snapshot) < 3:
+                if attach_video_for_alert and len(recent_frames_snapshot) < 3:
                     recent_frames_snapshot.extend([frame.copy() for _ in range(3 - len(recent_frames_snapshot))])
 
                 alert_payload = {
@@ -825,7 +836,8 @@ def camera_worker(config, cam_index: int):
                     "motion_score": motion_score,
                     "hand_to_mouth_source": motion_source,
                     "hand_to_mouth_event_count": len(config.motion_event_times),
-                    "attach_video": bool(motion_burst_trigger or hand_to_mouth_event_active),
+                    "attach_video": attach_video_for_alert,
+                    "video_required": video_required_for_alert,
                     "alert_reason": reason,
                 }
                 if not _enqueue_alert_job(config, alert_payload):

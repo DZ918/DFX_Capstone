@@ -58,7 +58,7 @@ case "$MODE" in
 				--cam 0 \
 				--model "$DASHBOARD_MODEL_PATH" \
 				--conf "$DASHBOARD_CONFIDENCE" \
-				--inference-imgsz 320 \
+				--inference-imgsz 960 \
 				--max-inference-fps 0 \
 					--fps 30 \
 				--jpeg-quality 65 \
@@ -92,7 +92,7 @@ Examples:
   ./start_gpu.sh dashboard --cam 1
 	DFX_DASHBOARD_MODEL_PATH=snack_model.pt ./start_gpu.sh
 	DFX_MOTION_ENABLED=off ./start_gpu.sh
-	./start_gpu.sh dashboard --motion-enabled --inference-imgsz 640
+	./start_gpu.sh dashboard --motion-enabled --inference-imgsz 960
   ./start_gpu.sh image ./runs/detect/training_data/runs/smoke/val_batch0_pred.jpg --out /tmp/out.jpg
 EOF
 		;;

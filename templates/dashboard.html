@@ -270,6 +270,7 @@
                 display: block;
                 background: #000;
             }
+            .alert-video.expandable { cursor: zoom-in; }
       .actions { display: flex; gap: 8px; }
       .actions button {
         border: 0;
@@ -378,7 +379,7 @@
         display: none;
         align-items: center;
         justify-content: center;
-        z-index: 999;
+        z-index: 1202;
         padding: 24px;
       }
       .lightbox.open { display: flex; }
@@ -928,7 +929,7 @@
         }
         return `<div class="alert-video-wrap">` +
           (recordingIsImage
-            ? `<img class="alert-video" src="${recordingUrl}" alt="Attached motion clip" loading="lazy" />`
+            ? `<img class="alert-video expandable" src="${recordingUrl}" alt="Attached motion clip" loading="lazy" />`
             : `<video class="alert-video" controls preload="metadata" playsinline>` +
                 `<source src="${recordingUrl}"${recordingMime ? ` type="${escapeHtml(recordingMime)}"` : ''} />` +
                 `Your browser cannot play this recording.` +
@@ -947,6 +948,7 @@
                 const zoomOutBtn = document.getElementById('zoomOutBtn');
                 const zoomResetBtn = document.getElementById('zoomResetBtn');
         const alertsPanel = document.getElementById('alertsPanel');
+        const staleAlertModal = document.getElementById('staleAlertModal');
                 const minZoom = 0.5;
                 const maxZoom = 5.0;
                 let zoom = 1.0;
@@ -979,13 +981,21 @@
           lightbox.setAttribute('aria-hidden', 'false');
         }
 
-        alertsPanel.addEventListener('click', (event) => {
-          const img = event.target.closest('img.expandable');
-          if (!img) {
+        function bindExpandableImageClicks(container) {
+          if (!container) {
             return;
           }
-          openLightbox(img.src, img.alt);
-        });
+          container.addEventListener('click', (event) => {
+            const img = event.target.closest('img.expandable');
+            if (!img) {
+              return;
+            }
+            openLightbox(img.src, img.alt);
+          });
+        }
+
+        bindExpandableImageClicks(alertsPanel);
+        bindExpandableImageClicks(staleAlertModal);
         closeBtn.addEventListener('click', closeLightbox);
                 zoomInBtn.addEventListener('click', () => setZoom(zoom + 0.25));
                 zoomOutBtn.addEventListener('click', () => setZoom(zoom - 0.25));
@@ -1535,7 +1545,7 @@
         document.getElementById('setStreamFps').value = Number(settings.stream_fps || 10).toFixed(0);
         document.getElementById('setWidth').value = Number(settings.width || 0).toFixed(0);
         document.getElementById('setHeight').value = Number(settings.height || 0).toFixed(0);
-        document.getElementById('setInferenceImgsz').value = Number(settings.inference_imgsz || 640).toFixed(0);
+        document.getElementById('setInferenceImgsz').value = Number(settings.inference_imgsz || 960).toFixed(0);
         document.getElementById('setMaxInferenceFps').value = Number(settings.max_inference_fps || 0).toFixed(1);
         document.getElementById('setJpegQuality').value = Number(settings.jpeg_quality || 75).toFixed(0);
         document.getElementById('setMotionEnabled').checked = Boolean(settings.motion_enabled);

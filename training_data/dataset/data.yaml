@@ -1,6 +1,6 @@
 path: /home/user/DFX_Capstone/training_data/dataset
-train: images/train
-val: images/val
+train: images
+val: images
 names:
   0: bottle
   1: donut

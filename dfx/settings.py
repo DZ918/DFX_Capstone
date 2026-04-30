@@ -111,7 +111,8 @@ def update_runtime_settings(config, payload: dict) -> dict:
         if "height" in payload:
             config.height = clamp_int(payload["height"], "height", 0, 2160)
         if "inference_imgsz" in payload:
-            config.inference_imgsz = clamp_int(payload["inference_imgsz"], "inference_imgsz", 160, 1280)
+            # Keep runtime updates in a small-object-safe range for wide-FOV cameras.
+            config.inference_imgsz = clamp_int(payload["inference_imgsz"], "inference_imgsz", 960, 1280)
         if "max_inference_fps" in payload:
             config.max_inference_fps = clamp_float(
                 payload["max_inference_fps"], "max_inference_fps", 0.0, 60.0
@@ -186,8 +187,17 @@ class DashboardConfig:
         if os.path.isabs(map_image_path):
             self.map_image_path = os.path.abspath(map_image_path)
         else:
-            project_root = os.path.dirname(os.path.abspath(__file__))
-            self.map_image_path = os.path.abspath(os.path.join(project_root, map_image_path))
+            package_dir = os.path.dirname(os.path.abspath(__file__))
+            workspace_root = os.path.abspath(os.path.join(package_dir, ".."))
+            candidate_paths = [
+                os.path.abspath(os.path.join(workspace_root, map_image_path)),
+                os.path.abspath(os.path.join(package_dir, map_image_path)),
+                os.path.abspath(map_image_path),
+            ]
+            self.map_image_path = next(
+                (candidate for candidate in candidate_paths if os.path.exists(candidate)),
+                candidate_paths[0],
+            )
         self.camera_enabled = True
         self.detection_enabled = True
         self.settings_updated_at = datetime.now().isoformat(timespec="seconds")

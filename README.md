@@ -1,7 +1,7 @@
 # DFX_Capstone
 
 python3 dashboard.py \
-  --inference-imgsz 320 \
+  --inference-imgsz 960 \
   --max-inference-fps 4 \
   --fps 6 \
   --jpeg-quality 65 \

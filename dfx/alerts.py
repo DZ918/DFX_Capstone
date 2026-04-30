@@ -622,8 +622,9 @@ def create_alert(
     hand_to_mouth_source: str = "none",
     hand_to_mouth_event_count: int = 0,
     attach_video: bool = False,
+    video_required: bool = False,
     alert_reason: str = "standard",
-) -> dict:
+) -> dict | None:
     """Build the alert record stored in JSON and rendered by the dashboard."""
     alert_id = uuid4().hex[:12]
     zone = normalize_camera_zone(camera_zone)
@@ -631,7 +632,7 @@ def create_alert(
         det["zone"] = zone
     video_file = None
     video_mime = ""
-    if motion_detected and attach_video:
+    if attach_video:
         video_result = add_alert_video(
             recent_frames=recent_frames or [],
             video_dir=video_dir,
@@ -640,6 +641,8 @@ def create_alert(
         )
         if video_result is not None:
             video_file, video_mime = video_result
+    if video_required and not video_file:
+        return None
     return {
         "id": alert_id,
         "status": "new",

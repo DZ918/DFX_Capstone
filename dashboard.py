@@ -94,8 +94,11 @@ def _alert_persist_worker(config):
                 hand_to_mouth_source=payload["hand_to_mouth_source"],
                 hand_to_mouth_event_count=payload["hand_to_mouth_event_count"],
                 attach_video=payload["attach_video"],
+                video_required=payload.get("video_required", False),
                 alert_reason=payload["alert_reason"],
             )
+            if alert is None:
+                continue
             with config.alert_lock:
                 append_alert(
                     config.alert_log,
@@ -125,7 +128,7 @@ def main():
     parser.add_argument("--train-imgsz", type=int, default=640)
     parser.add_argument("--width", type=int, default=0)
     parser.add_argument("--height", type=int, default=0)
-    parser.add_argument("--inference-imgsz", type=int, default=640)
+    parser.add_argument("--inference-imgsz", type=int, default=960)
     parser.add_argument("--max-inference-fps", type=float, default=0.0)
     parser.add_argument("--jpeg-quality", type=int, default=75)
     parser.add_argument("--motion-hold-seconds", type=float, default=0.1)
