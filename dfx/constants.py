@@ -38,6 +38,22 @@ def _read_text_env(name: str, default: str) -> str:
     return raw_value or str(default)
 
 
+def normalize_class_label(value: str) -> str:
+    """Normalize class labels for consistent matching across models and config files."""
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+_IGNORED_YOLO_CLASS_NAMES = {
+    "hand_to_mouth",
+    "handtomouth",
+}
+
+
+def is_ignored_yolo_class_name(value: str) -> bool:
+    """Return whether a class name should be ignored during YOLO inference parsing."""
+    return normalize_class_label(value) in _IGNORED_YOLO_CLASS_NAMES
+
+
 DEFAULT_DASHBOARD_MODEL_PATH = _default_dashboard_model_path()
 DEFAULT_DASHBOARD_CONFIDENCE = float(os.environ.get("DFX_DASHBOARD_CONFIDENCE", "0.35"))
 

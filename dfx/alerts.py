@@ -2,6 +2,7 @@
 
 import csv
 import json
+import logging
 import math
 import os
 import platform
@@ -30,6 +31,9 @@ from dfx.constants import (
 from dfx.detection import safe_token
 from dfx.motion import _extract_detection_geometry
 from dfx.settings import normalize_camera_zone
+
+
+logger = logging.getLogger(__name__)
 
 
 def read_alerts(log_path: str | None) -> list[dict]:
@@ -126,7 +130,7 @@ def ensure_alert_metadata(alerts: list[dict]) -> bool:
         if status == "acknowledged":
             alert["status"] = "accepted"
             changed = True
-        elif status not in {"new", "accepted"}:
+        elif status not in {"new", "accepted", "rejected"}:
             alert["status"] = "new"
             changed = True
     return changed
@@ -178,6 +182,7 @@ def build_consumption_stats(alerts: list[dict]) -> dict:
     total_people_detected = 0
     active_alerts = 0
     accepted_alerts = 0
+    rejected_alerts = 0
     breakdown_counts: dict[tuple[str, str], int] = {}
     for alert in alerts:
         if not alert_has_consumption_event(alert):
@@ -186,6 +191,8 @@ def build_consumption_stats(alerts: list[dict]) -> dict:
         status = str(alert.get("status", "")).strip().lower()
         if status == "accepted":
             accepted_alerts += 1
+        elif status == "rejected":
+            rejected_alerts += 1
         else:
             active_alerts += 1
         zone = str(alert.get("zone", "")).strip() or "Unassigned"
@@ -203,6 +210,7 @@ def build_consumption_stats(alerts: list[dict]) -> dict:
         "total_people_detected": total_people_detected,
         "active_alerts": active_alerts,
         "accepted_alerts": accepted_alerts,
+        "rejected_alerts": rejected_alerts,
         "breakdown": breakdown,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
@@ -361,6 +369,12 @@ def add_detection_snippets(
     height, width = frame.shape[:2]
     context_detections = context_detections or detections
     for idx, det in enumerate(detections):
+        normalized_class = str(det.get("class_name", "")).strip().lower().replace("-", "_").replace(" ", "_")
+        if normalized_class == "hand_to_mouth":
+            # Hand-to-mouth alerts are recording-only; do not attach still-image snippets.
+            det.pop("snippet_file", None)
+            det.pop("snippet_bbox_xywhn", None)
+            continue
         try:
             det_confidence = float(det.get("confidence", 0.0))
         except (TypeError, ValueError):
@@ -453,13 +467,79 @@ def add_alert_video(
         return None
     os.makedirs(video_dir, exist_ok=True)
 
-    first = recent_frames[0]
-    if first is None or not hasattr(first, "shape") or len(first.shape) < 2:
+    def _prepare_video_frame(frame, *, target_size: tuple[int, int] | None = None):
+        """Normalize one frame for OpenCV VideoWriter (uint8, BGR, contiguous, expected size)."""
+        if frame is None or not hasattr(frame, "shape") or len(frame.shape) < 2:
+            return None
+        frame_h, frame_w = int(frame.shape[0]), int(frame.shape[1])
+        if frame_h <= 0 or frame_w <= 0:
+            return None
+
+        prepared = frame
+        channels = int(frame.shape[2]) if len(frame.shape) >= 3 else 1
+        if channels == 1:
+            prepared = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+        elif channels == 4:
+            prepared = cv2.cvtColor(frame, cv2.COLOR_BGRA2BGR)
+        elif channels > 4:
+            prepared = frame[:, :, :3]
+
+        if getattr(prepared, "dtype", None) is not None and str(prepared.dtype) != "uint8":
+            prepared = prepared.astype("uint8", copy=False)
+
+        if target_size is not None:
+            target_w, target_h = int(target_size[0]), int(target_size[1])
+            if target_w <= 0 or target_h <= 0:
+                return None
+            if int(prepared.shape[1]) != target_w or int(prepared.shape[0]) != target_h:
+                prepared = cv2.resize(prepared, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+
+        return prepared if prepared.flags["C_CONTIGUOUS"] else prepared.copy()
+
+    prepared_frames = [
+        _prepare_video_frame(frame)
+        for frame in recent_frames
+    ]
+    prepared_frames = [frame for frame in prepared_frames if frame is not None]
+    if len(prepared_frames) < 2:
         return None
-    height, width = int(first.shape[0]), int(first.shape[1])
+
+    # Use the most recent frame as the canonical writer dimensions and normalize every frame to match.
+    canonical_height = int(prepared_frames[-1].shape[0])
+    canonical_width = int(prepared_frames[-1].shape[1])
+    if canonical_width <= 0 or canonical_height <= 0:
+        return None
+    normalized_frames = [
+        _prepare_video_frame(frame, target_size=(canonical_width, canonical_height))
+        for frame in prepared_frames
+    ]
+    normalized_frames = [
+        frame
+        for frame in normalized_frames
+        if frame is not None and int(frame.shape[0]) == canonical_height and int(frame.shape[1]) == canonical_width
+    ]
+    if len(normalized_frames) < 2:
+        return None
+
+    height, width = canonical_height, canonical_width
     if width <= 0 or height <= 0:
         return None
     safe_fps = max(3.0, float(fps or 8.0))
+
+    def _is_browser_friendly_mp4(path: str) -> bool:
+        """Best-effort MP4 codec guard for browser playback compatibility."""
+        try:
+            with open(path, "rb") as handle:
+                header = handle.read(512 * 1024)
+        except OSError:
+            return False
+        if not header:
+            return False
+        lower = header.lower()
+        # MPEG-4 Part 2 (`mp4v`) often yields blank/unplayable clips in browser <video>.
+        if b"mp4v" in lower:
+            return False
+        return any(tag in lower for tag in (b"avc1", b"h264", b"hvc1", b"hev1", b"av01"))
 
     def _is_usable_alert_video(path: str, min_written_frames: int) -> bool:
         """Accept only files that are non-trivial and decodable for browser playback."""
@@ -482,18 +562,13 @@ def add_alert_video(
         """Fallback for environments where browser-friendly video codecs are unavailable."""
         if Image is None:
             return None
-        valid_frames = [
-            frame
-            for frame in recent_frames
-            if frame is not None and hasattr(frame, "shape") and len(frame.shape) >= 2
-        ]
-        if len(valid_frames) < 2:
+        if len(normalized_frames) < 2:
             return None
         max_frames = 28
-        sample_step = max(1, len(valid_frames) // max_frames)
-        sampled_frames = valid_frames[::sample_step]
+        sample_step = max(1, len(normalized_frames) // max_frames)
+        sampled_frames = normalized_frames[::sample_step]
         if len(sampled_frames) < 2:
-            sampled_frames = [valid_frames[0], valid_frames[-1]]
+            sampled_frames = [normalized_frames[0], normalized_frames[-1]]
 
         pil_frames = []
         for frame in sampled_frames:
@@ -533,6 +608,13 @@ def add_alert_video(
             pass
         return None
 
+    if platform.system() == "Linux" and prefer_mp4:
+        # On some Jetson builds, browser-safe MP4 encoders are unavailable.
+        # Prefer a deterministic GIF fallback to keep recordings attached.
+        gif_result = _write_alert_gif()
+        if gif_result is not None:
+            return gif_result
+
     if platform.system() == "Linux" and not prefer_mp4:
         # Jetson/OpenCV builds frequently emit MP4 files that decode in OpenCV but fail in browsers.
         # Prefer an animated GIF attachment so the dashboard always renders the recording inline.
@@ -542,14 +624,19 @@ def add_alert_video(
 
     # Prefer the most reliably available codec first on Linux/Jetson to reduce encoder-probe noise.
     if platform.system() == "Linux":
-        codec_candidates = [
-            ("mp4v", "mp4", "video/mp4"),
-            ("avc1", "mp4", "video/mp4"),
-            ("H264", "mp4", "video/mp4"),
-            ("X264", "mp4", "video/mp4"),
-            ("VP80", "webm", "video/webm"),
-            ("VP90", "webm", "video/webm"),
-        ]
+        if prefer_mp4:
+            codec_candidates = [
+                ("avc1", "mp4", "video/mp4"),
+            ]
+        else:
+            codec_candidates = [
+                ("avc1", "mp4", "video/mp4"),
+                ("H264", "mp4", "video/mp4"),
+                ("X264", "mp4", "video/mp4"),
+                ("mp4v", "mp4", "video/mp4"),
+                ("VP80", "webm", "video/webm"),
+                ("VP90", "webm", "video/webm"),
+            ]
     else:
         codec_candidates = [
             ("avc1", "mp4", "video/mp4"),
@@ -572,12 +659,11 @@ def add_alert_video(
             continue
         written_frames = 0
         try:
-            for frame in recent_frames:
-                if frame is None or not hasattr(frame, "shape") or len(frame.shape) < 2:
+            for frame in normalized_frames:
+                if frame is None:
                     continue
-                frame_h, frame_w = int(frame.shape[0]), int(frame.shape[1])
-                if frame_h != height or frame_w != width:
-                    frame = cv2.resize(frame, (width, height))
+                if int(frame.shape[0]) != height or int(frame.shape[1]) != width:
+                    continue
                 writer.write(frame)
                 written_frames += 1
         finally:
@@ -588,7 +674,29 @@ def add_alert_video(
             except OSError:
                 pass
             continue
+        if not os.path.exists(output_path) or os.path.getsize(output_path) <= 0:
+            logger.warning(
+                "Dropping empty alert video output for codec %s (frames=%s, size=0)",
+                codec,
+                written_frames,
+            )
+            try:
+                os.remove(output_path)
+            except OSError:
+                pass
+            continue
         if _is_usable_alert_video(output_path, min_written_frames=written_frames):
+            if extension == "mp4" and not _is_browser_friendly_mp4(output_path):
+                logger.warning(
+                    "Dropping non-browser MP4 codec output for codec %s (file=%s)",
+                    codec,
+                    output_name,
+                )
+                try:
+                    os.remove(output_path)
+                except OSError:
+                    pass
+                continue
             if platform.system() == "Linux" and codec == "mp4v" and not prefer_mp4:
                 # MPEG-4 Part 2 often decodes in OpenCV but not in browser <video>.
                 gif_result = _write_alert_gif()

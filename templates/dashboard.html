@@ -15,6 +15,8 @@
         --new-fg: #991b1b;
         --accepted-bg: #dcfce7;
         --accepted-fg: #166534;
+        --rejected-bg: #e5e7eb;
+        --rejected-fg: #374151;
         --btn: #1f2937;
         --btn-hover: #111827;
       }
@@ -100,6 +102,17 @@
         color: #6b7280;
       }
       .camera-feed-wrap { width: 100%; }
+      .camera-feed-off {
+        min-height: 170px;
+        aspect-ratio: 16 / 9;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #9ca3af;
+        font-size: 12px;
+        background: #0b1220;
+        border: 1px solid #1f2937;
+      }
       .camera-panel-actions {
         display: flex;
         align-items: center;
@@ -233,6 +246,7 @@
       .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
       .status-new { background: var(--new-bg); color: var(--new-fg); }
       .status-accepted { background: var(--accepted-bg); color: var(--accepted-fg); }
+      .status-rejected { background: var(--rejected-bg); color: var(--rejected-fg); }
       .meta { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
       .det-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px; margin-bottom: 10px; }
       .det-card { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fafafa; }
@@ -280,6 +294,15 @@
         font-weight: 600;
       }
       .fold-section[open] summary { margin-bottom: 10px; }
+      .fold-controls {
+        display: flex;
+        justify-content: flex-end;
+        margin-bottom: 10px;
+      }
+      .fold-inline-btn {
+        padding: 5px 9px;
+        font-size: 11px;
+      }
       .zone-group {
         display: grid;
         gap: 8px;
@@ -515,11 +538,15 @@
         flex-wrap: wrap;
       }
       .annotation-controls-row select,
-      .annotation-controls-row input {
+      .annotation-controls-row input:not([type="checkbox"]) {
         padding: 4px 8px;
         border-radius: 6px;
         border: 1px solid var(--border);
         font-size: 13px;
+      }
+      .annotation-controls-row input[type="checkbox"] {
+        width: 14px;
+        height: 14px;
       }
       .annotation-status {
         font-size: 12px;
@@ -696,6 +723,7 @@
             Group by zone
           </label>
           <button id="clearStatsTableBtn" class="table-clear-btn" type="button">Clear Table</button>
+          <button id="deleteAllAlertsBtn" class="table-clear-btn" type="button">Delete Pending Alerts</button>
         </div>
                 <section class="backend-stats" aria-label="Backend eating and drinking counts">
                     <div class="stats-total">Total people detected eating/drinking: <strong id="consumptionTotalCount">0</strong></div>
@@ -722,6 +750,13 @@
             <details id="acceptedSection" class="fold-section" style="display:none;">
               <summary>Accepted (<span id="acceptedCount">0</span>)</summary>
               <div id="acceptedAlerts" class="alerts-list"></div>
+            </details>
+            <details id="rejectedSection" class="fold-section" style="display:none;">
+              <summary>Rejected (<span id="rejectedCount">0</span>)</summary>
+              <div class="fold-controls">
+                <button id="clearRejectedAlertsBtn" class="table-clear-btn fold-inline-btn" type="button">Clear Rejected</button>
+              </div>
+              <div id="rejectedAlerts" class="alerts-list"></div>
             </details>
             <details id="newSection" class="fold-section" open>
               <summary>New / Active (<span id="newCount">0</span>)</summary>
@@ -774,6 +809,16 @@
               <button id="annotateSave" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:#166534; color:#fff; cursor:pointer;">Save</button>
               <button id="annotateCancel" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:var(--btn); color:#fff; cursor:pointer;">Cancel</button>
               <button id="annotateRedraw" type="button" style="border:0; border-radius:8px; padding:6px 12px; font-size:12px; background:#6b7280; color:#fff; cursor:pointer;">Redraw</button>
+            </div>
+            <div class="annotation-controls-row">
+              <label style="display:flex; align-items:center; gap:6px; color:#cbd5e1; font-size:12px;">
+                <input id="annotateUseSeparateCrop" type="checkbox" />
+                Use separate crop box
+              </label>
+              <label style="display:flex; align-items:center; gap:6px; color:#cbd5e1; font-size:12px;">
+                Confidence
+                <input id="annotateConfidence" type="number" min="0" max="1" step="0.01" value="1.00" style="width:90px;" />
+              </label>
             </div>
             <div id="annotateStatus" class="annotation-status"></div>
           </div>
@@ -852,6 +897,10 @@
       function renderDetection(det) {
         const confidence = Number(det.confidence || 0).toFixed(2);
         const className = escapeHtml(det.class_name || 'item');
+        const normalizedClass = String(det.class_name || '').trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+        if (normalizedClass === 'hand_to_mouth') {
+          return `<div class="det-card"><div class="det-label">${className} (${confidence})</div></div>`;
+        }
         const snippet = det.snippet_file
           ? `<img class="expandable" loading="lazy" src="/snippets/${encodeURIComponent(det.snippet_file)}" alt="${className} snippet" />`
           : `<div class="det-empty">No crop</div>`;
@@ -963,14 +1012,25 @@
       }
 
       async function manageAlert(alertId, action) {
-        const res = await fetch('/alerts/manage', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ alert_id: alertId, action }),
-        });
+        const normalizedId = String(alertId || '').trim();
+        if (!normalizedId) {
+          throw new Error('Missing alert ID');
+        }
+        let res;
+        if (String(action || '').toLowerCase() === 'delete') {
+          const encodedId = encodeURIComponent(normalizedId);
+          res = await fetch(`/api/alerts/${encodedId}/delete`, {
+            method: 'DELETE',
+          });
+        } else {
+          res = await fetch('/alerts/manage', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ alert_id: normalizedId, action }),
+          });
+        }
         if (!res.ok) {
-          const text = await res.text();
-          throw new Error(text || `HTTP ${res.status}`);
+          throw new Error(await readApiError(res));
         }
       }
 
@@ -1057,7 +1117,10 @@
       }
 
       function activeAlertsOnly(alerts) {
-        return alerts.filter((alert) => alertStatus(alert) !== 'accepted');
+        return alerts.filter((alert) => {
+          const status = alertStatus(alert);
+          return status !== 'accepted' && status !== 'rejected';
+        });
       }
 
       function staleAlertFingerprint(alerts) {
@@ -1117,6 +1180,7 @@
           `<div class="stale-alert-actions">` +
             `<button type="button" data-action="accept">Accept</button>` +
             `<button type="button" data-action="reject" class="reject">Reject</button>` +
+            `<button type="button" data-action="delete" class="reject">Delete</button>` +
           `</div>`;
         item.querySelectorAll('button[data-action]').forEach((button) => {
           button.addEventListener('click', async () => {
@@ -1242,11 +1306,15 @@
         const index = Number(camera.index || 0);
         const label = String(camera.label || `Camera ${index}`);
         const zone = String(camera.zone || 'Unassigned');
+        const isAvailable = Boolean(camera.available);
         const card = document.createElement('article');
         card.className = 'camera-panel';
-        const statusText = camera.available ? 'Live' : (camera.error || 'Unavailable');
-        const statusClass = camera.available ? 'camera-status' : 'camera-status is-error';
-        const metaText = camera.available ? `${zone}` : (camera.error || `${zone} waiting for camera`);
+        const statusText = isAvailable ? 'Live' : (camera.error || 'Unavailable');
+        const statusClass = isAvailable ? 'camera-status' : 'camera-status is-error';
+        const metaText = isAvailable ? `${zone}` : (camera.error || `${zone} waiting for camera`);
+        const feedMarkup = isAvailable
+          ? `<img class="feed" src="${escapeHtml(camera.stream_url || `/stream?camera=${index}`)}" alt="Camera ${index} live feed" />`
+          : `<div class="feed camera-feed-off">${escapeHtml(statusText)}</div>`;
         card.innerHTML =
           `<div class="camera-panel-head">` +
             `<div>` +
@@ -1256,7 +1324,7 @@
             `<span class="${statusClass}">${escapeHtml(statusText)}</span>` +
           `</div>` +
           `<div class="camera-feed-wrap">` +
-            `<img class="feed" src="${escapeHtml(camera.stream_url || `/stream?camera=${index}`)}" alt="Camera ${index} live feed" />` +
+            feedMarkup +
           `</div>` +
           `<div class="camera-panel-actions">` +
             `<div class="camera-panel-meta">${escapeHtml(metaText)}</div>` +
@@ -1533,15 +1601,21 @@
       // Alert cards are rebuilt from API data on every meaningful refresh.
       function renderAlertCard(alert, errorEl) {
         const detections = Array.isArray(alert.detections) ? alert.detections : [];
+        const isHandToMouthOnly = detections.length > 0 && detections.every((det) => {
+          const normalizedClass = String((det && det.class_name) || '').trim().toLowerCase().replaceAll('-', '_').replaceAll(' ', '_');
+          return normalizedClass === 'hand_to_mouth';
+        });
         const zone = alert.zone || (detections[0] && detections[0].zone) || '';
-        const status = alert.status || 'new';
+        const status = alertStatus(alert);
         const isAccepted = status === 'accepted';
-        const badgeClass = isAccepted ? 'status-accepted' : 'status-new';
-        const actionBtn = isAccepted
-          ? `<button class="reject" data-action="delete">Delete</button>`
-          : `<button data-action="accept">Accept</button>`;
+        const isRejected = status === 'rejected';
+        const badgeClass = isAccepted ? 'status-accepted' : (isRejected ? 'status-rejected' : 'status-new');
         const controls = alert.id
-          ? `<div class="actions">${actionBtn}${isAccepted ? '' : '<button class="reject" data-action="reject">Reject</button>'}</div>`
+          ? (
+            (isAccepted || isRejected)
+              ? `<div class="actions"><button class="reject" data-action="delete">Delete</button></div>`
+              : `<div class="actions"><button data-action="accept">Accept</button><button class="reject" data-action="reject">Reject</button><button class="reject" data-action="delete">Delete</button></div>`
+          )
           : '';
                 const motionTag = alert.consumption_motion_detected
                     ? ` | hand-to-mouth (${Number(alert.consumption_motion_score || 0).toFixed(2)})`
@@ -1554,7 +1628,9 @@
                     : '';
         const zoneTag = zone ? ` | ${zone}` : '';
         const video = renderAlertRecording(alert);
-        const details = detections.length > 0
+        const details = isHandToMouthOnly
+          ? ''
+          : detections.length > 0
           ? `<div class="det-grid">${detections.map(renderDetection).join('')}</div>`
           : `<div class="empty-note">No object crop was attached to this alert. Review the hand-to-mouth motion metadata and recording.</div>`;
         const item = document.createElement('article');
@@ -1645,21 +1721,36 @@
       function renderAlerts(orderedAlerts, errorEl) {
         const activeList = document.getElementById('activeAlerts');
         const acceptedList = document.getElementById('acceptedAlerts');
+        const rejectedList = document.getElementById('rejectedAlerts');
         const acceptedCount = document.getElementById('acceptedCount');
+        const rejectedCount = document.getElementById('rejectedCount');
         const newCount = document.getElementById('newCount');
         const acceptedSection = document.getElementById('acceptedSection');
-        const activeAlerts = orderedAlerts.filter((alert) => (alert.status || 'new') !== 'accepted');
-        const acceptedAlerts = orderedAlerts.filter((alert) => (alert.status || 'new') === 'accepted');
+        const rejectedSection = document.getElementById('rejectedSection');
+        const activeAlerts = orderedAlerts.filter((alert) => {
+          const status = alertStatus(alert);
+          return status !== 'accepted' && status !== 'rejected';
+        });
+        const acceptedAlerts = orderedAlerts.filter((alert) => alertStatus(alert) === 'accepted');
+        const rejectedAlerts = orderedAlerts.filter((alert) => alertStatus(alert) === 'rejected');
 
         renderAlertsInto(activeList, activeAlerts, errorEl, 'No active alerts right now.');
         renderAlertsInto(acceptedList, acceptedAlerts, errorEl, 'No accepted alerts right now.');
+        renderAlertsInto(rejectedList, rejectedAlerts, errorEl, 'No rejected alerts right now.');
         newCount.textContent = String(activeAlerts.length);
         acceptedCount.textContent = String(acceptedAlerts.length);
+        rejectedCount.textContent = String(rejectedAlerts.length);
         if (acceptedAlerts.length === 0) {
           acceptedSection.open = false;
           acceptedSection.style.display = 'none';
         } else {
           acceptedSection.style.display = '';
+        }
+        if (rejectedAlerts.length === 0) {
+          rejectedSection.open = false;
+          rejectedSection.style.display = 'none';
+        } else {
+          rejectedSection.style.display = '';
         }
       }
 
@@ -1709,8 +1800,9 @@
                 }
                 const active = Number(data.active_alerts || 0);
                 const accepted = Number(data.accepted_alerts || 0);
+                const rejected = Number(data.rejected_alerts || 0);
                 const generatedAt = data.generated_at ? String(data.generated_at) : 'just now';
-                updatedEl.textContent = `Updated: ${generatedAt} | active: ${active} | accepted: ${accepted}`;
+                updatedEl.textContent = `Updated: ${generatedAt} | active: ${active} | accepted: ${accepted} | rejected: ${rejected}`;
             }
 
             async function refreshConsumptionStats() {
@@ -1748,13 +1840,102 @@
         }
       }
 
+      async function deleteAllAlerts(button) {
+        const confirmed = window.confirm('Are you sure you want to delete all pending alerts and their media? Accepted/rejected alerts will be kept.');
+        if (!confirmed) {
+          return;
+        }
+        if (button) {
+          button.disabled = true;
+        }
+        try {
+          const res = await fetch('/api/alerts/all', {
+            method: 'DELETE',
+          });
+          if (!res.ok) {
+            throw new Error(await readApiError(res));
+          }
+          const payload = await res.json().catch(() => ({}));
+          cachedOrderedAlerts = cachedOrderedAlerts.filter((alert) => {
+            const status = String((alert && alert.status) || 'new').trim().toLowerCase();
+            return status === 'accepted' || status === 'rejected';
+          });
+          lastAlertsFingerprint = '';
+          const errorEl = document.getElementById('error');
+          errorEl.textContent = '';
+          renderAlerts(cachedOrderedAlerts, errorEl);
+          const staleModal = document.getElementById('staleAlertModal');
+          if (staleModal && staleModal.classList.contains('open')) {
+            closeStaleAlertModal(false);
+          }
+          await refreshAlerts();
+          const deletedCount = Number(payload.deleted_alerts || 0);
+          const preservedCount = Number(payload.preserved_alerts || 0);
+          const updatedEl = document.getElementById('consumptionUpdatedAt');
+          if (updatedEl) {
+            updatedEl.textContent = `Deleted ${deletedCount} pending alert(s). Preserved ${preservedCount} accepted/rejected alert(s).`;
+          }
+        } catch (err) {
+            document.getElementById('error').textContent = err.message || 'Could not delete pending alerts.';
+        } finally {
+          if (button) {
+            button.disabled = false;
+          }
+        }
+      }
+
+      async function clearRejectedAlerts(button) {
+        const confirmed = window.confirm('Remove all rejected alerts from the dashboard? This will also delete their attached media files.');
+        if (!confirmed) {
+          return;
+        }
+        if (button) {
+          button.disabled = true;
+        }
+        try {
+          const res = await fetch('/api/alerts/rejected/clear', {
+            method: 'DELETE',
+          });
+          if (!res.ok) {
+            throw new Error(await readApiError(res));
+          }
+          const payload = await res.json().catch(() => ({}));
+          cachedOrderedAlerts = cachedOrderedAlerts.filter((alert) => alertStatus(alert) !== 'rejected');
+          lastAlertsFingerprint = '';
+          const errorEl = document.getElementById('error');
+          errorEl.textContent = '';
+          renderAlerts(cachedOrderedAlerts, errorEl);
+          await refreshAlerts();
+          const deletedCount = Number(payload.deleted_alerts || 0);
+          const updatedEl = document.getElementById('consumptionUpdatedAt');
+          if (updatedEl) {
+            updatedEl.textContent = `Cleared ${deletedCount} rejected alert(s).`;
+          }
+        } catch (err) {
+          document.getElementById('error').textContent = err.message || 'Could not clear rejected alerts.';
+        } finally {
+          if (button) {
+            button.disabled = false;
+          }
+        }
+      }
+
       document.getElementById('groupAlertsByZone').addEventListener('change', () => {
         renderAlerts(cachedOrderedAlerts, document.getElementById('error'));
       });
       document.getElementById('clearStatsTableBtn').addEventListener('click', (event) => {
         clearDashboardTable(event.currentTarget);
       });
+      document.getElementById('deleteAllAlertsBtn').addEventListener('click', (event) => {
+        deleteAllAlerts(event.currentTarget);
+      });
+      document.getElementById('clearRejectedAlertsBtn').addEventListener('click', (event) => {
+        clearRejectedAlerts(event.currentTarget);
+      });
       function setupAnnotation() {
+        const BOX_KIND_OBJECT = 'object';
+        const BOX_KIND_CROP = 'crop';
+
         const startBtn = document.getElementById('startAnnotateBtn');
         const modal = document.getElementById('annotationModal');
         const closeBtn = document.getElementById('annotationModalClose');
@@ -1766,12 +1947,16 @@
         const saveBtn = document.getElementById('annotateSave');
         const cancelBtn = document.getElementById('annotateCancel');
         const redrawBtn = document.getElementById('annotateRedraw');
+        const useSeparateCropInput = document.getElementById('annotateUseSeparateCrop');
+        const confidenceInput = document.getElementById('annotateConfidence');
         const statusEl = document.getElementById('annotateStatus');
         const ctx = canvas.getContext('2d');
         let snapshotImg = null;
         let drawing = false;
+        let drawingKind = BOX_KIND_OBJECT;
         let startX = 0, startY = 0, endX = 0, endY = 0;
-        let boxDrawn = false;
+        let objectBox = null;
+        let cropBox = null;
         let annotationCameraIndex = null;
         let annotationCameraLabel = lastDefaultCameraLabel;
         let snapshotPayload = '';
@@ -1797,12 +1982,127 @@
           modal.setAttribute('aria-hidden', 'true');
         }
 
+        function shouldUseSeparateCrop() {
+          return Boolean(useSeparateCropInput && useSeparateCropInput.checked);
+        }
+
+        function normalizeDrawnBox(ax, ay, bx, by) {
+          const left = Math.min(ax, bx);
+          const top = Math.min(ay, by);
+          const right = Math.max(ax, bx);
+          const bottom = Math.max(ay, by);
+          if ((right - left) <= 5 || (bottom - top) <= 5) {
+            return null;
+          }
+          return { left, top, right, bottom };
+        }
+
+        function boxToRatios(box) {
+          return [
+            box.left / canvas.width,
+            box.top / canvas.height,
+            box.right / canvas.width,
+            box.bottom / canvas.height,
+          ];
+        }
+
+        function isBoxInside(inner, outer) {
+          if (!inner || !outer) {
+            return false;
+          }
+          const epsilon = 0.0001;
+          return (
+            inner.left >= (outer.left - epsilon)
+            && inner.top >= (outer.top - epsilon)
+            && inner.right <= (outer.right + epsilon)
+            && inner.bottom <= (outer.bottom + epsilon)
+          );
+        }
+
+        function nextRequiredBoxKind() {
+          if (!objectBox) {
+            return BOX_KIND_OBJECT;
+          }
+          if (shouldUseSeparateCrop() && !cropBox) {
+            return BOX_KIND_CROP;
+          }
+          return '';
+        }
+
+        function statusMessageForState() {
+          const required = nextRequiredBoxKind();
+          if (required === BOX_KIND_OBJECT) {
+            return 'Draw the object box first.';
+          }
+          if (required === BOX_KIND_CROP) {
+            return 'Draw the crop box for the saved snippet.';
+          }
+          return 'Boxes ready. Select class/confidence and click Save.';
+        }
+
+        function drawNamedBox(box, color, fillColor, labelText) {
+          if (!box) {
+            return;
+          }
+          const width = box.right - box.left;
+          const height = box.bottom - box.top;
+          if (width <= 1 || height <= 1) {
+            return;
+          }
+          ctx.strokeStyle = color;
+          ctx.lineWidth = 2;
+          ctx.strokeRect(box.left, box.top, width, height);
+          if (fillColor) {
+            ctx.fillStyle = fillColor;
+            ctx.fillRect(box.left, box.top, width, height);
+          }
+          if (labelText) {
+            ctx.fillStyle = color;
+            ctx.font = '12px sans-serif';
+            ctx.fillText(labelText, box.left + 4, Math.max(12, box.top - 6));
+          }
+        }
+
+        function drawOverlay() {
+          if (!snapshotImg) {
+            return;
+          }
+          ctx.drawImage(snapshotImg, 0, 0);
+          drawNamedBox(cropBox, '#22c55e', 'rgba(34, 197, 94, 0.10)', 'Crop');
+          drawNamedBox(objectBox, '#f59e0b', 'rgba(245, 158, 11, 0.10)', 'Object');
+          if (drawing) {
+            const preview = normalizeDrawnBox(startX, startY, endX, endY);
+            if (preview) {
+              if (drawingKind === BOX_KIND_CROP) {
+                drawNamedBox(preview, '#22c55e', 'rgba(34, 197, 94, 0.16)', 'Crop (drawing)');
+              } else {
+                drawNamedBox(preview, '#f59e0b', 'rgba(245, 158, 11, 0.16)', 'Object (drawing)');
+              }
+            }
+          }
+        }
+
+        function resetBoxes() {
+          drawing = false;
+          drawingKind = BOX_KIND_OBJECT;
+          objectBox = null;
+          cropBox = null;
+          drawOverlay();
+          statusEl.textContent = statusMessageForState();
+        }
+
         function enterAnnotateMode(cameraIndex = null, cameraLabel = lastDefaultCameraLabel) {
           annotationCameraIndex = cameraIndex;
           annotationCameraLabel = cameraLabel;
           titleEl.textContent = `Annotate ${cameraLabel}`;
           snapshotPayload = '';
           snapshotPayloadReady = false;
+          if (useSeparateCropInput) {
+            useSeparateCropInput.checked = false;
+          }
+          if (confidenceInput) {
+            confidenceInput.value = '1.00';
+          }
           if (snapshotObjectUrl) {
             URL.revokeObjectURL(snapshotObjectUrl);
             snapshotObjectUrl = '';
@@ -1833,8 +2133,7 @@
                 URL.revokeObjectURL(snapshotObjectUrl);
                 snapshotObjectUrl = '';
               }
-              boxDrawn = false;
-              statusEl.textContent = 'Draw a box around the item.';
+              resetBoxes();
               // Populate class dropdown
               classSelect.innerHTML = '<option value="">Select class...</option>';
               classes.forEach(c => {
@@ -1856,100 +2155,135 @@
           closeModal();
           statusEl.textContent = '';
           snapshotImg = null;
-          boxDrawn = false;
           drawing = false;
+          drawingKind = BOX_KIND_OBJECT;
+          objectBox = null;
+          cropBox = null;
           snapshotPayload = '';
           snapshotPayloadReady = false;
           if (snapshotObjectUrl) {
             URL.revokeObjectURL(snapshotObjectUrl);
             snapshotObjectUrl = '';
           }
+          if (useSeparateCropInput) {
+            useSeparateCropInput.checked = false;
+          }
+          if (confidenceInput) {
+            confidenceInput.value = '1.00';
+          }
           annotationCameraIndex = null;
           annotationCameraLabel = lastDefaultCameraLabel;
-        }
-
-        function drawOverlay() {
-          if (!snapshotImg) return;
-          ctx.drawImage(snapshotImg, 0, 0);
-          const rx = Math.min(startX, endX);
-          const ry = Math.min(startY, endY);
-          const rw = Math.abs(endX - startX);
-          const rh = Math.abs(endY - startY);
-          if (rw > 2 && rh > 2) {
-            ctx.strokeStyle = '#00ff00';
-            ctx.lineWidth = 2;
-            ctx.strokeRect(rx, ry, rw, rh);
-            ctx.fillStyle = 'rgba(0, 255, 0, 0.1)';
-            ctx.fillRect(rx, ry, rw, rh);
-          }
         }
 
         function canvasCoords(e) {
           const rect = canvas.getBoundingClientRect();
           const scaleX = canvas.width / rect.width;
           const scaleY = canvas.height / rect.height;
-          const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-          const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+          let clientX = e.clientX;
+          let clientY = e.clientY;
+          if (e.touches && e.touches.length > 0) {
+            clientX = e.touches[0].clientX;
+            clientY = e.touches[0].clientY;
+          } else if (e.changedTouches && e.changedTouches.length > 0) {
+            clientX = e.changedTouches[0].clientX;
+            clientY = e.changedTouches[0].clientY;
+          }
           return {
             x: (clientX - rect.left) * scaleX,
             y: (clientY - rect.top) * scaleY
           };
         }
 
-        canvas.addEventListener('mousedown', function(e) {
+        function beginDraw(e) {
+          if (!snapshotImg) {
+            return;
+          }
+          const required = nextRequiredBoxKind();
+          if (!required) {
+            statusEl.textContent = 'Both boxes are already set. Click Redraw to draw again.';
+            return;
+          }
+          drawingKind = required;
           const p = canvasCoords(e);
-          startX = p.x; startY = p.y;
-          endX = p.x; endY = p.y;
+          startX = p.x;
+          startY = p.y;
+          endX = p.x;
+          endY = p.y;
           drawing = true;
-          boxDrawn = false;
+          drawOverlay();
+        }
+
+        function updateDraw(e) {
+          if (!drawing) {
+            return;
+          }
+          const p = canvasCoords(e);
+          endX = p.x;
+          endY = p.y;
+          drawOverlay();
+        }
+
+        function finishDraw(e = null) {
+          if (!drawing) {
+            return;
+          }
+          if (e) {
+            const p = canvasCoords(e);
+            endX = p.x;
+            endY = p.y;
+          }
+          drawing = false;
+          const drawnBox = normalizeDrawnBox(startX, startY, endX, endY);
+          if (!drawnBox) {
+            drawOverlay();
+            statusEl.textContent = 'Box too small. Try again.';
+            return;
+          }
+          if (drawingKind === BOX_KIND_CROP) {
+            cropBox = drawnBox;
+          } else {
+            objectBox = drawnBox;
+          }
+          if (!shouldUseSeparateCrop()) {
+            cropBox = null;
+          }
+          drawOverlay();
+          statusEl.textContent = statusMessageForState();
+        }
+
+        canvas.addEventListener('mousedown', function(e) {
+          beginDraw(e);
         });
         canvas.addEventListener('mousemove', function(e) {
-          if (!drawing) return;
-          const p = canvasCoords(e);
-          endX = p.x; endY = p.y;
-          drawOverlay();
+          updateDraw(e);
         });
         canvas.addEventListener('mouseup', function(e) {
-          if (!drawing) return;
-          drawing = false;
-          const p = canvasCoords(e);
-          endX = p.x; endY = p.y;
-          drawOverlay();
-          if (Math.abs(endX - startX) > 5 && Math.abs(endY - startY) > 5) {
-            boxDrawn = true;
-            statusEl.textContent = 'Box drawn. Select a class and click Save.';
-          } else {
-            statusEl.textContent = 'Box too small. Try again.';
-          }
+          finishDraw(e);
         });
 
         // Touch support
         canvas.addEventListener('touchstart', function(e) {
           e.preventDefault();
-          const p = canvasCoords(e);
-          startX = p.x; startY = p.y;
-          endX = p.x; endY = p.y;
-          drawing = true;
-          boxDrawn = false;
+          beginDraw(e);
         }, {passive: false});
         canvas.addEventListener('touchmove', function(e) {
           e.preventDefault();
-          if (!drawing) return;
-          const p = canvasCoords(e);
-          endX = p.x; endY = p.y;
-          drawOverlay();
+          updateDraw(e);
         }, {passive: false});
         canvas.addEventListener('touchend', function(e) {
-          if (!drawing) return;
-          drawing = false;
-          drawOverlay();
-          if (Math.abs(endX - startX) > 5 && Math.abs(endY - startY) > 5) {
-            boxDrawn = true;
-            statusEl.textContent = 'Box drawn. Select a class and click Save.';
-          } else {
-            statusEl.textContent = 'Box too small. Try again.';
-          }
-        });
+          e.preventDefault();
+          finishDraw(e);
+        }, {passive: false});
+
+        if (useSeparateCropInput) {
+          useSeparateCropInput.addEventListener('change', function() {
+            if (!shouldUseSeparateCrop()) {
+              cropBox = null;
+            }
+            drawOverlay();
+            statusEl.textContent = statusMessageForState();
+          });
+        }
 
         openAnnotationForCamera = (cameraIndex = null, cameraLabel = lastDefaultCameraLabel) => {
           enterAnnotateMode(cameraIndex, cameraLabel);
@@ -1962,9 +2296,7 @@
         cancelBtn.addEventListener('click', exitAnnotateMode);
         redrawBtn.addEventListener('click', function() {
           if (snapshotImg) {
-            ctx.drawImage(snapshotImg, 0, 0);
-            boxDrawn = false;
-            statusEl.textContent = 'Draw a box around the item.';
+            resetBoxes();
           }
         });
 
@@ -1974,38 +2306,56 @@
             statusEl.textContent = 'Please select or type a class name.';
             return;
           }
-          if (!boxDrawn) {
-            statusEl.textContent = 'Please draw a box first.';
+          const confidence = Number.parseFloat(String((confidenceInput && confidenceInput.value) || '1').trim());
+          if (!Number.isFinite(confidence) || confidence < 0.0 || confidence > 1.0) {
+            statusEl.textContent = 'Confidence must be a number between 0.00 and 1.00.';
+            return;
+          }
+          const required = nextRequiredBoxKind();
+          if (required === BOX_KIND_OBJECT) {
+            statusEl.textContent = 'Please draw the object box first.';
+            return;
+          }
+          if (required === BOX_KIND_CROP) {
+            statusEl.textContent = 'Please draw the crop box before saving.';
+            return;
+          }
+          const effectiveCropBox = shouldUseSeparateCrop() ? cropBox : objectBox;
+          if (!objectBox || !effectiveCropBox) {
+            statusEl.textContent = 'Please complete the required boxes first.';
+            return;
+          }
+          if (!isBoxInside(objectBox, effectiveCropBox)) {
+            statusEl.textContent = 'The object box must be fully inside the crop box.';
             return;
           }
           if (!snapshotPayloadReady || !snapshotPayload) {
             statusEl.textContent = 'Snapshot is still loading. Please wait a moment.';
             return;
           }
-          const x1 = Math.min(startX, endX) / canvas.width;
-          const y1 = Math.min(startY, endY) / canvas.height;
-          const x2 = Math.max(startX, endX) / canvas.width;
-          const y2 = Math.max(startY, endY) / canvas.height;
+          const cropRatios = boxToRatios(effectiveCropBox);
+          const objectRatios = boxToRatios(objectBox);
           statusEl.textContent = 'Saving...';
           try {
             const res = await fetch('/annotate', {
               method: 'POST',
               headers: {'Content-Type': 'application/json'},
               body: JSON.stringify({
-                bbox: [x1, y1, x2, y2],
+                bbox: cropRatios,
+                object_bbox: objectRatios,
                 class_name: className,
+                confidence: Number(confidence.toFixed(4)),
                 camera_index: annotationCameraIndex,
                 snapshot_data_url: snapshotPayload,
               })
             });
-            const data = await res.json();
-            if (data.ok) {
-              statusEl.textContent = `Saved for ${annotationCameraLabel}. Alert ID: ${data.alert_id}`;
-              setTimeout(exitAnnotateMode, 1500);
-              refreshAlerts();
-            } else {
-              statusEl.textContent = 'Error saving annotation.';
+            if (!res.ok) {
+              throw new Error(await readApiError(res));
             }
+            const data = await res.json().catch(() => ({}));
+            statusEl.textContent = `Saved for ${annotationCameraLabel}. Alert ID: ${data.alert_id || 'unknown'}`;
+            setTimeout(exitAnnotateMode, 1500);
+            refreshAlerts();
           } catch (err) {
             statusEl.textContent = 'Error: ' + err.message;
           }

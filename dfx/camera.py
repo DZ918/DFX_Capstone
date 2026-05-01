@@ -27,6 +27,7 @@ from dfx.constants import (
     ALERT_DETECTION_CONFIDENCE_FLOOR,
     ALERT_SNIPPET_CONFIDENCE_FLOOR,
     FOOD_HAND_TO_MOUTH_EVENT_MIN_SCORE,
+    HAND_MOUTH_SCORE_FLOOR,
     HAND_TO_MOUTH_FOOD_VISIBILITY_FLOOR,
     FOOD_MOTION_CONFIRM_FRAMES,
     FOOD_MOTION_MIN_SCORE,
@@ -46,6 +47,8 @@ from dfx.constants import (
     SAME_PERSON_MAX_ALERTS_IN_WINDOW,
     SAME_PERSON_SUPPRESSION_DISTANCE_RATIO,
     STATIONARY_FOLLOWUP_SECONDS,
+    is_ignored_yolo_class_name,
+    normalize_class_label,
 )
 from dfx.alerts import (
     append_alert,
@@ -75,6 +78,9 @@ logger = logging.getLogger(__name__)
 _ALERT_MIN_BOX_AREA_RATIO = 0.0012
 _DRINK_ALERT_CLASS_NAMES = {"bottle", "cup", "drink", "drinks"}
 _DRINK_ALERT_CONFIDENCE_FLOOR = max(0.70, ALERT_DETECTION_CONFIDENCE_FLOOR + 0.08)
+_PROXY_GESTURE_DEBOUNCE_SECONDS = 2.0
+_PROXY_ALERT_SETTLE_SECONDS = 2.5
+_PROXY_MIN_BUFFER_SECONDS = 2.0
 
 
 def _camera_backend_flag() -> int:
@@ -168,6 +174,85 @@ def _warm_camera_stream(capture, warmup_reads: int = 4) -> bool:
         if ok and frame is not None and getattr(frame, "size", 0) > 0:
             return True
     return False
+
+
+def _iter_model_names(model) -> list[tuple[int, str]]:
+    """Return model class names as (id, name) pairs across YOLO wrappers."""
+    names = getattr(model, "names", None)
+    if names is None and hasattr(model, "model"):
+        names = getattr(model.model, "names", None)
+    if isinstance(names, dict):
+        return [(int(class_id), str(name)) for class_id, name in names.items()]
+    if isinstance(names, list):
+        return [(int(class_id), str(name)) for class_id, name in enumerate(names)]
+    return []
+
+
+def _ignored_yolo_class_ids(model) -> set[int]:
+    """Resolve class IDs that should be stripped from raw YOLO inference output."""
+    ignored_ids: set[int] = set()
+    for class_id, class_name in _iter_model_names(model):
+        if is_ignored_yolo_class_name(normalize_class_label(class_name)):
+            ignored_ids.add(int(class_id))
+    return ignored_ids
+
+
+def _strip_result_boxes_by_class_ids(result, blocked_class_ids: set[int]) -> int:
+    """Remove blocked-class boxes from one Ultralytics result object in place."""
+    if not blocked_class_ids:
+        return 0
+    boxes = getattr(result, "boxes", None)
+    if boxes is None:
+        return 0
+    cls_values = getattr(boxes, "cls", None)
+    if cls_values is None:
+        return 0
+    try:
+        total = int(len(cls_values))
+    except Exception:
+        return 0
+    if total <= 0:
+        return 0
+
+    keep_indices: list[int] = []
+    for idx in range(total):
+        try:
+            class_id = int(cls_values[idx])
+        except Exception:
+            keep_indices.append(idx)
+            continue
+        if class_id not in blocked_class_ids:
+            keep_indices.append(idx)
+    removed = total - len(keep_indices)
+    if removed <= 0:
+        return 0
+
+    if hasattr(boxes, "__getitem__"):
+        try:
+            result.boxes = boxes[keep_indices]
+            return removed
+        except Exception:
+            try:
+                import torch
+
+                device = getattr(cls_values, "device", None)
+                keep_tensor = torch.as_tensor(keep_indices, dtype=torch.long, device=device)
+                result.boxes = boxes[keep_tensor]
+                return removed
+            except Exception:
+                pass
+
+    try:
+        if isinstance(getattr(boxes, "xyxy", None), list):
+            boxes.xyxy = [boxes.xyxy[idx] for idx in keep_indices]
+        if isinstance(getattr(boxes, "conf", None), list):
+            boxes.conf = [boxes.conf[idx] for idx in keep_indices]
+        if isinstance(getattr(boxes, "cls", None), list):
+            boxes.cls = [boxes.cls[idx] for idx in keep_indices]
+        result.boxes = boxes
+        return removed
+    except Exception:
+        return 0
 
 
 def _open_camera_capture_with_fallback(
@@ -582,16 +667,54 @@ def _register_proxy_hand_to_mouth_event(
     event_active: bool,
     now_ts: float,
 ) -> tuple[bool, int]:
-    """Record a rising-edge event and evaluate per-person 3-in-30 trigger + cooldown."""
+    """Track distinct per-person proxy gestures and trigger after settle delay."""
     state_by_person = getattr(config, "person_proxy_event_state", None)
     if not isinstance(state_by_person, dict):
         state_by_person = {}
         config.person_proxy_event_state = state_by_person
 
+    def _prune_event_times(event_times: deque) -> None:
+        while event_times and (now_ts - float(event_times[0])) > HAND_TO_MOUTH_WINDOW_SECONDS:
+            event_times.popleft()
+
+    def _evaluate_pending_trigger(state: dict) -> bool:
+        pending_trigger_at = float(state.get("pending_trigger_at", 0.0))
+        cooldown_until = float(state.get("cooldown_until", 0.0))
+        if pending_trigger_at <= 0.0:
+            return False
+        if now_ts < pending_trigger_at or now_ts < cooldown_until:
+            return False
+        state["pending_trigger_at"] = 0.0
+        state["cooldown_until"] = float(now_ts + HAND_TO_MOUTH_PERSON_COOLDOWN_SECONDS)
+        state["last_trigger_ts"] = float(now_ts)
+        return True
+
     if person_track_id is None:
+        triggered = False
+        max_count = 0
         for tracked_state in state_by_person.values():
-            tracked_state["last_event_active"] = False
-        return False, 0
+            event_times = tracked_state.get("event_times")
+            if not isinstance(event_times, deque):
+                event_times = deque()
+                tracked_state["event_times"] = event_times
+            _prune_event_times(event_times)
+            if bool(tracked_state.get("last_event_active", False)):
+                tracked_state["last_event_active"] = False
+                tracked_state["hand_away_since"] = float(now_ts)
+            elif float(tracked_state.get("hand_away_since", 0.0)) <= 0.0:
+                tracked_state["hand_away_since"] = float(now_ts)
+            if _evaluate_pending_trigger(tracked_state):
+                triggered = True
+            max_count = max(max_count, len(event_times))
+
+        stale_after = max(
+            float(HAND_TO_MOUTH_PERSON_COOLDOWN_SECONDS) * 2.0,
+            float(HAND_TO_MOUTH_PERSON_TRACK_MAX_GAP_SECONDS) * 8.0,
+        )
+        for tracked_person_id, tracked_state in list(state_by_person.items()):
+            if (now_ts - float(tracked_state.get("last_seen_ts", 0.0))) > stale_after:
+                state_by_person.pop(tracked_person_id, None)
+        return triggered, max_count
 
     state = state_by_person.setdefault(
         int(person_track_id),
@@ -600,6 +723,9 @@ def _register_proxy_hand_to_mouth_event(
             "last_event_active": False,
             "cooldown_until": 0.0,
             "last_seen_ts": float(now_ts),
+            "hand_away_since": float(now_ts - _PROXY_GESTURE_DEBOUNCE_SECONDS),
+            "pending_trigger_at": 0.0,
+            "last_logged_event_ts": float(now_ts - _PROXY_GESTURE_DEBOUNCE_SECONDS),
         },
     )
     event_times = state.get("event_times")
@@ -607,25 +733,40 @@ def _register_proxy_hand_to_mouth_event(
         event_times = deque()
         state["event_times"] = event_times
 
-    while event_times and (now_ts - float(event_times[0])) > HAND_TO_MOUTH_WINDOW_SECONDS:
-        event_times.popleft()
+    _prune_event_times(event_times)
 
     last_event_active = bool(state.get("last_event_active", False))
-    if bool(event_active) and not last_event_active:
-        event_times.append(float(now_ts))
+    hand_away_since = float(state.get("hand_away_since", 0.0))
+    cooldown_until = float(state.get("cooldown_until", 0.0))
+    last_logged_event_ts = float(state.get("last_logged_event_ts", 0.0))
+    if bool(event_active):
+        if not last_event_active:
+            away_duration = float("inf") if hand_away_since <= 0.0 else (now_ts - hand_away_since)
+            log_debounce_elapsed = (now_ts - last_logged_event_ts) >= _PROXY_GESTURE_DEBOUNCE_SECONDS
+            if (
+                away_duration >= _PROXY_GESTURE_DEBOUNCE_SECONDS
+                and log_debounce_elapsed
+                and now_ts >= cooldown_until
+            ):
+                event_times.append(float(now_ts))
+                state["last_logged_event_ts"] = float(now_ts)
+        state["hand_away_since"] = 0.0
+    else:
+        if last_event_active or hand_away_since <= 0.0:
+            state["hand_away_since"] = float(now_ts)
 
-    while event_times and (now_ts - float(event_times[0])) > HAND_TO_MOUTH_WINDOW_SECONDS:
-        event_times.popleft()
+    _prune_event_times(event_times)
 
     event_count = len(event_times)
-    cooldown_until = float(state.get("cooldown_until", 0.0))
-    triggered = bool(
+    pending_trigger_at = float(state.get("pending_trigger_at", 0.0))
+    if (
         event_count >= int(HAND_TO_MOUTH_REQUIRED_EVENTS)
+        and pending_trigger_at <= 0.0
         and now_ts >= cooldown_until
-    )
-    if triggered:
-        state["cooldown_until"] = float(now_ts + HAND_TO_MOUTH_PERSON_COOLDOWN_SECONDS)
-        state["last_trigger_ts"] = float(now_ts)
+    ):
+        state["pending_trigger_at"] = float(now_ts + _PROXY_ALERT_SETTLE_SECONDS)
+
+    triggered = _evaluate_pending_trigger(state)
 
     state["last_event_active"] = bool(event_active)
     state["last_seen_ts"] = float(now_ts)
@@ -805,6 +946,75 @@ def _select_primary_alert_detections(
 
 def _persist_alert_synchronously(config, payload: dict):
     """Compatibility path: persist one alert inline when no alert queue is configured."""
+
+    def _requires_strict_proxy_recording() -> bool:
+        return bool(
+            payload.get("video_required", False)
+            and str(payload.get("alert_reason", "")).strip().lower() == "motion_burst"
+            and str(payload.get("hand_to_mouth_source", "")).strip().lower() == "person_proxy"
+        )
+
+    def _cleanup_orphan_video_file(video_file_name: str) -> None:
+        video_dir = str(payload.get("video_dir", "")).strip()
+        if not video_dir:
+            return
+        safe_name = os.path.basename(str(video_file_name or "").strip())
+        if not safe_name or safe_name in {".", ".."}:
+            return
+        candidate_path = os.path.abspath(os.path.join(video_dir, safe_name))
+        try:
+            if os.path.commonpath([os.path.abspath(video_dir), candidate_path]) != os.path.abspath(video_dir):
+                return
+        except ValueError:
+            return
+        try:
+            if os.path.exists(candidate_path):
+                os.remove(candidate_path)
+        except OSError:
+            pass
+
+    def _resolve_safe_video_path(video_file_name: str) -> str:
+        video_dir = str(payload.get("video_dir", "")).strip()
+        if not video_dir:
+            return ""
+        safe_name = os.path.basename(str(video_file_name or "").strip())
+        if not safe_name or safe_name in {".", ".."}:
+            return ""
+        root_abs = os.path.abspath(video_dir)
+        candidate_path = os.path.abspath(os.path.join(root_abs, safe_name))
+        try:
+            if os.path.commonpath([root_abs, candidate_path]) != root_abs:
+                return ""
+        except ValueError:
+            return ""
+        return candidate_path
+
+    def _cleanup_orphan_snippet_files(alert_record: dict) -> None:
+        snippet_dir = str(payload.get("snippet_dir", "")).strip()
+        if not snippet_dir or not isinstance(alert_record, dict):
+            return
+        detections = alert_record.get("detections")
+        if not isinstance(detections, list):
+            return
+        snippet_root = os.path.abspath(snippet_dir)
+        for det in detections:
+            if not isinstance(det, dict):
+                continue
+            safe_name = os.path.basename(str(det.get("snippet_file", "")).strip())
+            if not safe_name or safe_name in {".", ".."}:
+                continue
+            candidate_path = os.path.abspath(os.path.join(snippet_root, safe_name))
+            try:
+                if os.path.commonpath([snippet_root, candidate_path]) != snippet_root:
+                    continue
+            except ValueError:
+                continue
+            try:
+                if os.path.exists(candidate_path):
+                    os.remove(candidate_path)
+            except OSError:
+                pass
+
     alert = create_alert(
         payload["frame"],
         payload["detections"],
@@ -823,6 +1033,35 @@ def _persist_alert_synchronously(config, payload: dict):
         prefer_mp4=payload.get("prefer_mp4", False),
         alert_reason=payload["alert_reason"],
     )
+    if _requires_strict_proxy_recording():
+        if alert is None:
+            logger.error(
+                "Dropping proxy hand-to-mouth alert: required buffered recording was not created"
+            )
+            return
+        video_file = str(alert.get("video_file", "")).strip()
+        if not video_file:
+            logger.error(
+                "Dropping proxy hand-to-mouth alert: recording filename is missing"
+            )
+            _cleanup_orphan_video_file(video_file)
+            _cleanup_orphan_snippet_files(alert)
+            return
+        video_path = _resolve_safe_video_path(video_file)
+        video_size = -1
+        if video_path and os.path.exists(video_path):
+            try:
+                video_size = int(os.path.getsize(video_path))
+            except OSError:
+                video_size = -1
+        if video_size <= 0:
+            logger.error(
+                "Dropping proxy hand-to-mouth alert: buffered recording is empty or missing (size=%s)",
+                video_size,
+            )
+            _cleanup_orphan_video_file(video_file)
+            _cleanup_orphan_snippet_files(alert)
+            return
     if alert is None:
         return
     with config.alert_lock:
@@ -868,6 +1107,7 @@ def camera_worker(config, cam_index: int):
     last_motion_score = 0.0
     next_inference_at = 0.0
     allowed_ids = None
+    ignored_class_ids: set[int] | None = None
     active_model = None
     active_allowed_names: frozenset[str] = frozenset()
     last_open_failure_summary = ""
@@ -1040,10 +1280,15 @@ def camera_worker(config, cam_index: int):
                             getattr(config, "runtime_food_class_names", runtime_food_class_names(config))
                         )
                         allowed_names_key = frozenset(allowed_names)
-                        if model is not active_model or allowed_names_key != active_allowed_names:
+                        if model is not active_model:
                             active_model = model
+                            ignored_class_ids = None
+                            allowed_ids = None
+                        if allowed_names_key != active_allowed_names:
                             active_allowed_names = allowed_names_key
                             allowed_ids = None
+                        if ignored_class_ids is None:
+                            ignored_class_ids = _ignored_yolo_class_ids(model)
                         if allowed_ids is None:
                             allowed_ids = get_allowed_class_ids(model, allowed_names)
                         predict_kwargs = {
@@ -1055,6 +1300,10 @@ def camera_worker(config, cam_index: int):
                             "device": getattr(config, "inference_device", "cpu"),
                         }
                         results = predict_with_fallback(model, frame, **predict_kwargs)
+                        if results:
+                            result = results[0]
+                            if ignored_class_ids:
+                                _strip_result_boxes_by_class_ids(result, ignored_class_ids)
                         selected_device = str(
                             getattr(model, "_dfx_inference_device_override", predict_kwargs["device"])
                         ).strip() or "cpu"
@@ -1165,7 +1414,15 @@ def camera_worker(config, cam_index: int):
                         )
                     )
 
-                    proxy_sequence_active = bool(hand_to_mouth_event_active and motion_source == "person_proxy")
+                    proxy_gesture_triggered = bool(
+                        isinstance(person_proxy_details, dict)
+                        and bool(person_proxy_details.get("gesture_triggered", False))
+                    )
+                    proxy_sequence_active = bool(
+                        hand_to_mouth_event_active
+                        and motion_source == "person_proxy"
+                        and proxy_gesture_triggered
+                    )
                     proxy_person_track_id = _resolve_proxy_person_track_id(
                         person_detections,
                         person_proxy_details,
@@ -1176,6 +1433,12 @@ def camera_worker(config, cam_index: int):
                         proxy_sequence_active,
                         wall_now,
                     )
+                    if motion_burst_trigger and motion_source != "person_proxy":
+                        # Delayed burst triggers can fire after per-frame proxy score cools down.
+                        # Keep the alert source consistent so downstream strict video checks apply.
+                        motion_source = "person_proxy"
+                        motion_detected = True
+                        motion_score = max(float(motion_score), float(HAND_MOUTH_SCORE_FLOOR))
                     if motion_burst_trigger:
                         burst_trigger_frames = list(recent_frames)
 
@@ -1269,79 +1532,108 @@ def camera_worker(config, cam_index: int):
 
                 payload_detections = deepcopy(primary_alert_detections)
                 if motion_burst_trigger:
-                    has_snippet_candidate = any(
-                        float(det.get("confidence", 0.0)) >= ALERT_SNIPPET_CONFIDENCE_FLOOR
-                        for det in payload_detections
-                        if isinstance(det, dict)
+                    # Motion-burst alerts are hand-to-mouth events; keep payload class focused on that marker.
+                    marker = _build_hand_to_mouth_alert_marker(
+                        config,
+                        frame,
+                        person_detections,
+                        motion_score,
+                        motion_source,
                     )
-                    if not has_snippet_candidate:
-                        marker = _build_hand_to_mouth_alert_marker(
-                            config,
-                            frame,
-                            person_detections,
-                            motion_score,
-                            motion_source,
-                        )
-                        if marker is not None:
-                            payload_detections.append(marker)
+                    if marker is not None:
+                        payload_detections = [marker]
+                    else:
+                        payload_detections = [
+                            det
+                            for det in payload_detections
+                            if isinstance(det, dict)
+                            and normalize_class_label(str(det.get("class_name", ""))) == "hand_to_mouth"
+                        ]
 
-                attach_video_for_alert = bool(motion_detected or motion_burst_trigger or hand_to_mouth_event_active)
-                video_required_for_alert = bool(motion_burst_trigger)
-                recent_frames_snapshot = (
-                    list(burst_trigger_frames)
-                    if motion_burst_trigger and burst_trigger_frames
-                    else list(recent_frames)
+                is_hand_to_mouth_alert = any(
+                    isinstance(det, dict)
+                    and normalize_class_label(str(det.get("class_name", ""))) == "hand_to_mouth"
+                    for det in payload_detections
                 )
-                if attach_video_for_alert and len(recent_frames_snapshot) < 3:
-                    recent_frames_snapshot.extend([frame.copy() for _ in range(3 - len(recent_frames_snapshot))])
 
-                alert_payload = {
-                    "frame": frame.copy(),
-                    "detections": payload_detections,
-                    "snippet_dir": config.snippet_dir,
-                    "video_dir": config.video_dir,
-                    "recent_frames": recent_frames_snapshot,
-                    "video_fps": stream_fps,
-                    "camera_zone": camera_zone,
-                    "context_detections": deepcopy(all_detections),
-                    "motion_detected": motion_detected,
-                    "motion_score": motion_score,
-                    "hand_to_mouth_source": motion_source,
-                    "hand_to_mouth_event_count": int(hand_to_mouth_event_count),
-                    "attach_video": attach_video_for_alert,
-                    "video_required": video_required_for_alert,
-                    "prefer_mp4": bool(motion_burst_trigger),
-                    "alert_reason": reason,
-                }
-                if not _enqueue_alert_job(config, alert_payload):
-                    _persist_alert_synchronously(config, alert_payload)
-                config.last_alert_ts = wall_now
-                remember_alert_objects(config, primary_alert_detections, wall_now)
-                if alert_person_center is not None:
-                    config.person_alert_history.append(
-                        (
-                            float(alert_person_center[0]),
-                            float(alert_person_center[1]),
-                            float(wall_now),
-                        )
+                # Only proxy hand-to-mouth burst alerts must carry video from the rolling buffer.
+                # Static object alerts stay image-only.
+                attach_video_for_alert = bool(motion_burst_trigger and is_hand_to_mouth_alert)
+                video_required_for_alert = bool(motion_burst_trigger and is_hand_to_mouth_alert)
+                should_persist_alert = True
+                if motion_burst_trigger and not is_hand_to_mouth_alert:
+                    should_persist_alert = False
+                    logger.error(
+                        "Dropping motion-burst alert: no hand_to_mouth detection in payload"
                     )
-                if motion_burst_trigger:
-                    # Per-person cooldown throttles proxy burst alerts.
-                    pass
-                elif stationary_followup_trigger:
-                    config.stationary_followup_sent = True
-                elif new_object_trigger:
-                    config.armed = True
-                    config.stationary_first_alert_ts = 0.0
-                    config.stationary_followup_sent = False
+                if attach_video_for_alert:
+                    recent_frames_snapshot = (
+                        list(burst_trigger_frames)
+                        if motion_burst_trigger and burst_trigger_frames
+                        else list(recent_frames)
+                    )
+                    min_buffer_frames = max(
+                        6,
+                        int(round(max(3.0, float(stream_fps)) * _PROXY_MIN_BUFFER_SECONDS)),
+                    )
+                    if len(recent_frames_snapshot) < min_buffer_frames:
+                        logger.error(
+                            "Dropping proxy hand-to-mouth alert: buffered clip too short (%s < %s frames)",
+                            len(recent_frames_snapshot),
+                            min_buffer_frames,
+                        )
+                        should_persist_alert = False
                 else:
-                    config.armed = False
-                    if motion_detected:
+                    recent_frames_snapshot = []
+
+                if should_persist_alert:
+                    alert_payload = {
+                        "frame": frame.copy(),
+                        "detections": payload_detections,
+                        "snippet_dir": config.snippet_dir,
+                        "video_dir": config.video_dir,
+                        "recent_frames": recent_frames_snapshot,
+                        "video_fps": stream_fps,
+                        "camera_zone": camera_zone,
+                        "context_detections": deepcopy(all_detections),
+                        "motion_detected": motion_detected,
+                        "motion_score": motion_score,
+                        "hand_to_mouth_source": motion_source,
+                        "hand_to_mouth_event_count": int(hand_to_mouth_event_count),
+                        "attach_video": attach_video_for_alert,
+                        "video_required": video_required_for_alert,
+                        "prefer_mp4": bool(motion_burst_trigger),
+                        "alert_reason": reason,
+                    }
+                    if not _enqueue_alert_job(config, alert_payload):
+                        _persist_alert_synchronously(config, alert_payload)
+                    config.last_alert_ts = wall_now
+                    remember_alert_objects(config, primary_alert_detections, wall_now)
+                    if alert_person_center is not None:
+                        config.person_alert_history.append(
+                            (
+                                float(alert_person_center[0]),
+                                float(alert_person_center[1]),
+                                float(wall_now),
+                            )
+                        )
+                    if motion_burst_trigger:
+                        # Per-person cooldown throttles proxy burst alerts.
+                        pass
+                    elif stationary_followup_trigger:
+                        config.stationary_followup_sent = True
+                    elif new_object_trigger:
+                        config.armed = True
                         config.stationary_first_alert_ts = 0.0
                         config.stationary_followup_sent = False
                     else:
-                        config.stationary_first_alert_ts = wall_now
-                        config.stationary_followup_sent = False
+                        config.armed = False
+                        if motion_detected:
+                            config.stationary_first_alert_ts = 0.0
+                            config.stationary_followup_sent = False
+                        else:
+                            config.stationary_first_alert_ts = wall_now
+                            config.stationary_followup_sent = False
 
             annotated = draw_detections(frame, detections) if detection_enabled else frame.copy()
             if detection_enabled and motion_detected:

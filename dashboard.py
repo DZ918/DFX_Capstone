@@ -112,6 +112,65 @@ def _alert_persist_worker(config):
                 prefer_mp4=payload.get("prefer_mp4", False),
                 alert_reason=payload["alert_reason"],
             )
+            requires_strict_proxy_recording = bool(
+                payload.get("video_required", False)
+                and str(payload.get("alert_reason", "")).strip().lower() == "motion_burst"
+                and str(payload.get("hand_to_mouth_source", "")).strip().lower() == "person_proxy"
+            )
+            if requires_strict_proxy_recording:
+                if alert is None:
+                    print(
+                        "Warning: dropping proxy hand-to-mouth alert because required buffered recording was not created"
+                    )
+                    continue
+                video_file = str(alert.get("video_file", "")).strip()
+                if not video_file:
+                    snippet_dir = str(payload.get("snippet_dir", "")).strip()
+                    detections = alert.get("detections") if isinstance(alert, dict) else None
+                    if snippet_dir and isinstance(detections, list):
+                        snippet_root = os.path.abspath(snippet_dir)
+                        for det in detections:
+                            if not isinstance(det, dict):
+                                continue
+                            snippet_file = os.path.basename(str(det.get("snippet_file", "")).strip())
+                            if not snippet_file or snippet_file in {".", ".."}:
+                                continue
+                            snippet_candidate = os.path.abspath(os.path.join(snippet_root, snippet_file))
+                            try:
+                                if os.path.commonpath([snippet_root, snippet_candidate]) == snippet_root:
+                                    if os.path.exists(snippet_candidate):
+                                        os.remove(snippet_candidate)
+                            except (OSError, ValueError):
+                                pass
+                    print(
+                        "Warning: dropping proxy hand-to-mouth alert because generated recording filename is missing"
+                    )
+                    continue
+                video_dir = str(payload.get("video_dir", "")).strip()
+                safe_video_path = ""
+                if video_dir and video_file:
+                    safe_video_path = os.path.abspath(os.path.join(video_dir, os.path.basename(video_file)))
+                    try:
+                        if os.path.commonpath([os.path.abspath(video_dir), safe_video_path]) != os.path.abspath(video_dir):
+                            safe_video_path = ""
+                    except ValueError:
+                        safe_video_path = ""
+                video_size = -1
+                if safe_video_path and os.path.exists(safe_video_path):
+                    try:
+                        video_size = int(os.path.getsize(safe_video_path))
+                    except OSError:
+                        video_size = -1
+                if video_size <= 0:
+                    if safe_video_path:
+                        try:
+                            os.remove(safe_video_path)
+                        except OSError:
+                            pass
+                    print(
+                        "Warning: dropping proxy hand-to-mouth alert because buffered recording is empty or missing"
+                    )
+                    continue
             if alert is None:
                 continue
             with config.alert_lock:
@@ -125,6 +184,23 @@ def _alert_persist_worker(config):
             print(f"Warning: failed to persist alert job: {exc}")
         finally:
             alert_queue.task_done()
+
+
+def _camera_worker_supervisor(config):
+    """Keep the primary camera worker alive and auto-restart it after unexpected crashes."""
+    while not config.stop:
+        try:
+            camera_worker(config, config.camera_index)
+        except Exception as exc:
+            print(f"Warning: camera worker crashed; restarting in 0.5s: {exc}")
+            if config.stop:
+                break
+            time.sleep(0.5)
+            continue
+        # camera_worker normally runs until config.stop becomes True.
+        if config.stop:
+            break
+        time.sleep(0.1)
 
 
 def main():
@@ -223,7 +299,7 @@ def main():
     alert_persist_worker.start()
 
     if not args.test:
-        worker = threading.Thread(target=camera_worker, args=(config, config.camera_index), daemon=True)
+        worker = threading.Thread(target=_camera_worker_supervisor, args=(config,), daemon=True)
         worker.start()
 
     camera_manager = CameraManager(

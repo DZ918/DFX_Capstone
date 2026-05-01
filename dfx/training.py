@@ -16,7 +16,12 @@ try:
 except Exception:
     YOLO = None
 
-from dfx.constants import FOOD_CLASS_NAMES, TRAIN_VIDEO_SAMPLE_MAX_FRAMES
+from dfx.constants import (
+    FOOD_CLASS_NAMES,
+    TRAIN_VIDEO_SAMPLE_MAX_FRAMES,
+    is_ignored_yolo_class_name,
+    normalize_class_label,
+)
 from dfx.detection import safe_token
 from dfx.alerts import read_alerts, write_alerts, ensure_alert_metadata
 from dfx.gpu import get_best_device, is_jetson_linux, prepare_model_for_inference
@@ -202,10 +207,14 @@ def write_class_map(path: str, class_map: dict[str, int]) -> None:
 
 def runtime_food_class_names(config) -> set[str]:
     """Return the union of built-in food classes and any trained class-map entries."""
-    names = {str(name).strip().lower() for name in FOOD_CLASS_NAMES if str(name).strip()}
+    names = {
+        normalize_class_label(name)
+        for name in FOOD_CLASS_NAMES
+        if str(name).strip() and not is_ignored_yolo_class_name(name)
+    }
     for class_name in read_class_map(config.class_map_path).keys():
-        normalized = str(class_name).strip().lower()
-        if normalized:
+        normalized = normalize_class_label(class_name)
+        if normalized and not is_ignored_yolo_class_name(normalized):
             names.add(normalized)
     return names
 

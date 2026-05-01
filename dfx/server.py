@@ -75,6 +75,9 @@ _FIXED_CAMERA_INDICES = (
     _FIXED_PRIMARY_CAMERA_INDEX,
     _FIXED_SECONDARY_CAMERA_INDEX,
 )
+_ALERT_DELETE_API_PATH_RE = re.compile(r"^/api/alerts/(?P<alert_id>[A-Za-z0-9_-]+)/delete$")
+_ALERT_DELETE_ALL_API_PATHS = {"/api/alerts/all", "/api/alerts/delete_all"}
+_ALERT_DELETE_REJECTED_API_PATHS = {"/api/alerts/rejected", "/api/alerts/rejected/clear"}
 
 
 def _load_html_page() -> str:
@@ -103,6 +106,65 @@ def _fixed_layout_description() -> str:
     primary_zone = _zone_for_camera_index(_FIXED_PRIMARY_CAMERA_INDEX)
     secondary_zone = _zone_for_camera_index(_FIXED_SECONDARY_CAMERA_INDEX)
     return f"{primary_label} ({primary_zone}) and {secondary_label} ({secondary_zone})"
+
+
+def _safe_media_filename(value: str) -> str:
+    """Sanitize one media filename so delete operations cannot escape configured roots."""
+    token = os.path.basename(str(value or "").strip())
+    if token in {"", ".", ".."}:
+        return ""
+    return token
+
+
+def _safe_remove_media_file(root_dir: str | None, file_name: str) -> bool:
+    """Delete one file only when it resolves inside the configured media directory."""
+    root = str(root_dir or "").strip()
+    safe_name = _safe_media_filename(file_name)
+    if not root or not safe_name:
+        return False
+    root_abs = os.path.abspath(root)
+    candidate_abs = os.path.abspath(os.path.join(root_abs, safe_name))
+    try:
+        if os.path.commonpath([root_abs, candidate_abs]) != root_abs:
+            return False
+    except ValueError:
+        return False
+    if not os.path.exists(candidate_abs):
+        return False
+    try:
+        os.remove(candidate_abs)
+        return True
+    except OSError:
+        return False
+
+
+def _delete_alert_media_files(alert: dict, *, snippet_dir: str | None, video_dir: str | None) -> dict[str, int]:
+    """Hard-delete attached snippet/video files for one alert record."""
+    summary = {
+        "deleted_snippets": 0,
+        "deleted_videos": 0,
+    }
+    if not isinstance(alert, dict):
+        return summary
+
+    video_name = _safe_media_filename(str(alert.get("video_file", "")))
+    if _safe_remove_media_file(video_dir, video_name):
+        summary["deleted_videos"] += 1
+
+    snippet_names: set[str] = set()
+    detections = alert.get("detections")
+    if isinstance(detections, list):
+        for det in detections:
+            if not isinstance(det, dict):
+                continue
+            snippet_name = _safe_media_filename(str(det.get("snippet_file", "")))
+            if snippet_name:
+                snippet_names.add(snippet_name)
+    for snippet_name in sorted(snippet_names):
+        if _safe_remove_media_file(snippet_dir, snippet_name):
+            summary["deleted_snippets"] += 1
+
+    return summary
 
 
 def _dashboard_state_path(config) -> str:
@@ -265,12 +327,15 @@ def _build_persistent_consumption_stats(state: dict, alerts: list[dict]) -> dict
 
     active_alerts = 0
     accepted_alerts = 0
+    rejected_alerts = 0
     for alert in alerts:
         if not isinstance(alert, dict):
             continue
         status = str(alert.get("status", "")).strip().lower()
         if status == "accepted":
             accepted_alerts += 1
+        elif status == "rejected":
+            rejected_alerts += 1
         else:
             active_alerts += 1
 
@@ -278,6 +343,7 @@ def _build_persistent_consumption_stats(state: dict, alerts: list[dict]) -> dict
         "total_people_detected": int(total),
         "active_alerts": int(active_alerts),
         "accepted_alerts": int(accepted_alerts),
+        "rejected_alerts": int(rejected_alerts),
         "breakdown": ordered_breakdown,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "persisted": True,
@@ -349,6 +415,16 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         parsed = urlparse(self.path)
+        if parsed.path in _ALERT_DELETE_ALL_API_PATHS:
+            self._delete_all_alerts()
+            return
+        if parsed.path in _ALERT_DELETE_REJECTED_API_PATHS:
+            self._delete_rejected_alerts()
+            return
+        delete_match = _ALERT_DELETE_API_PATH_RE.fullmatch(parsed.path)
+        if delete_match is not None:
+            self._delete_alert_by_id(delete_match.group("alert_id"))
+            return
         if parsed.path == "/cameras/add":
             self._add_active_camera()
             return
@@ -375,6 +451,20 @@ class DashboardHandler(BaseHTTPRequestHandler):
             return
         self.send_error(HTTPStatus.NOT_FOUND, "Not found")
 
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        if parsed.path in _ALERT_DELETE_ALL_API_PATHS:
+            self._delete_all_alerts()
+            return
+        if parsed.path in _ALERT_DELETE_REJECTED_API_PATHS:
+            self._delete_rejected_alerts()
+            return
+        delete_match = _ALERT_DELETE_API_PATH_RE.fullmatch(parsed.path)
+        if delete_match is not None:
+            self._delete_alert_by_id(delete_match.group("alert_id"))
+            return
+        self.send_error(HTTPStatus.NOT_FOUND, "Not found")
+
     def _send_json(self, payload: dict | list, status=HTTPStatus.OK):
         """Send a JSON response with no-cache headers for live dashboard polling."""
         body = json.dumps(payload, indent=2).encode("utf-8")
@@ -382,8 +472,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
 
     def _send_html(self, html):
         """Send the inline dashboard HTML page."""
@@ -391,8 +484,11 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self.send_response(HTTPStatus.OK)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            return
 
     def _read_json_body(self):
         """Read and parse a bounded JSON request body."""
@@ -455,6 +551,9 @@ class DashboardHandler(BaseHTTPRequestHandler):
         if not alert_id or action not in {"accept", "reject", "delete"}:
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid alert_id or action")
             return
+        if action == "delete":
+            self._delete_alert_by_id(alert_id)
+            return
 
         with config.alert_lock:
             alerts = read_alerts(config.alert_log)
@@ -467,25 +566,172 @@ class DashboardHandler(BaseHTTPRequestHandler):
             if target_index < 0:
                 self.send_error(HTTPStatus.NOT_FOUND, "Alert not found")
                 return
+            target_alert = alerts[target_index]
+            current_status = str(target_alert.get("status", "")).strip().lower()
+            now_iso = datetime.now().isoformat(timespec="seconds")
             if action == "reject":
-                export_rejected_alert_samples(alerts[target_index], config)
-                alerts.pop(target_index)
-            elif action == "delete":
-                alerts.pop(target_index)
-            else:
-                # Accepting an alert also exports its snippets into the training dataset.
-                exported_count = export_accepted_alert_samples(alerts[target_index], config)
-                alerts[target_index]["status"] = "accepted"
+                exported_count = 0
+                if current_status != "rejected":
+                    exported_count = export_rejected_alert_samples(target_alert, config)
+                target_alert["status"] = "rejected"
                 if exported_count > 0:
                     try:
-                        current_samples = int(alerts[target_index].get("accepted_samples", 0))
+                        current_samples = int(target_alert.get("rejected_samples", 0))
                     except (TypeError, ValueError):
                         current_samples = 0
-                    alerts[target_index]["accepted_samples"] = current_samples + exported_count
-                alerts[target_index]["accepted_at"] = datetime.now().isoformat(timespec="seconds")
-                alerts[target_index]["updated_at"] = datetime.now().isoformat(timespec="seconds")
+                    target_alert["rejected_samples"] = current_samples + exported_count
+                target_alert["rejected_at"] = now_iso
+                target_alert["updated_at"] = now_iso
+            else:
+                # Accepting an alert also exports its snippets into the training dataset.
+                exported_count = 0
+                if current_status != "accepted":
+                    exported_count = export_accepted_alert_samples(target_alert, config)
+                target_alert["status"] = "accepted"
+                if exported_count > 0:
+                    try:
+                        current_samples = int(target_alert.get("accepted_samples", 0))
+                    except (TypeError, ValueError):
+                        current_samples = 0
+                    target_alert["accepted_samples"] = current_samples + exported_count
+                target_alert["accepted_at"] = now_iso
+                target_alert["updated_at"] = now_iso
             write_alerts(config.alert_log, alerts)
         self._send_json({"ok": True, "action": action, "alert_id": alert_id}, HTTPStatus.OK)
+
+    def _delete_alert_by_id(self, alert_id: str):
+        """Hard-delete one alert plus attached media files from persistent storage."""
+        config: DashboardConfig = self.server.config
+        if config.test_mode:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Alert management disabled in --test mode")
+            return
+        normalized_alert_id = str(alert_id or "").strip()
+        if not normalized_alert_id:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Invalid alert_id")
+            return
+
+        with config.alert_lock:
+            alerts = read_alerts(config.alert_log)
+            ensure_alert_metadata(alerts)
+            target_index = -1
+            for idx, alert in enumerate(alerts):
+                if isinstance(alert, dict) and str(alert.get("id", "")).strip() == normalized_alert_id:
+                    target_index = idx
+                    break
+            if target_index < 0:
+                self.send_error(HTTPStatus.NOT_FOUND, "Alert not found")
+                return
+
+            target_alert = alerts[target_index]
+            delete_summary = _delete_alert_media_files(
+                target_alert,
+                snippet_dir=getattr(config, "snippet_dir", None),
+                video_dir=getattr(config, "video_dir", None),
+            )
+            alerts.pop(target_index)
+            write_alerts(config.alert_log, alerts)
+
+        self._send_json(
+            {
+                "ok": True,
+                "action": "delete",
+                "alert_id": normalized_alert_id,
+                **delete_summary,
+            },
+            HTTPStatus.OK,
+        )
+
+    def _delete_all_alerts(self):
+        """Hard-delete pending alerts and attached media while preserving accepted/rejected items."""
+        config: DashboardConfig = self.server.config
+        if config.test_mode:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Alert management disabled in --test mode")
+            return
+
+        deleted_alerts = 0
+        deleted_snippets = 0
+        deleted_videos = 0
+        preserved_alerts = 0
+        with config.alert_lock:
+            alerts = read_alerts(config.alert_log)
+            remaining_alerts: list = []
+            for alert in alerts:
+                if not isinstance(alert, dict):
+                    remaining_alerts.append(alert)
+                    continue
+                status = str(alert.get("status", "new")).strip().lower()
+                if status == "acknowledged":
+                    status = "accepted"
+                if status in {"accepted", "rejected"}:
+                    remaining_alerts.append(alert)
+                    preserved_alerts += 1
+                    continue
+                summary = _delete_alert_media_files(
+                    alert,
+                    snippet_dir=getattr(config, "snippet_dir", None),
+                    video_dir=getattr(config, "video_dir", None),
+                )
+                deleted_alerts += 1
+                deleted_snippets += int(summary.get("deleted_snippets", 0))
+                deleted_videos += int(summary.get("deleted_videos", 0))
+            write_alerts(config.alert_log, remaining_alerts)
+
+        self._send_json(
+            {
+                "ok": True,
+                "action": "delete_all",
+                "deleted_alerts": int(deleted_alerts),
+                "deleted_snippets": int(deleted_snippets),
+                "deleted_videos": int(deleted_videos),
+                "preserved_alerts": int(preserved_alerts),
+            },
+            HTTPStatus.OK,
+        )
+
+    def _delete_rejected_alerts(self):
+        """Hard-delete only rejected alerts and their attached media files."""
+        config: DashboardConfig = self.server.config
+        if config.test_mode:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Alert management disabled in --test mode")
+            return
+
+        deleted_alerts = 0
+        deleted_snippets = 0
+        deleted_videos = 0
+        with config.alert_lock:
+            alerts = read_alerts(config.alert_log)
+            ensure_alert_metadata(alerts)
+            remaining_alerts: list = []
+            for alert in alerts:
+                if not isinstance(alert, dict):
+                    remaining_alerts.append(alert)
+                    continue
+                status = str(alert.get("status", "new")).strip().lower()
+                if status == "acknowledged":
+                    status = "accepted"
+                if status != "rejected":
+                    remaining_alerts.append(alert)
+                    continue
+                summary = _delete_alert_media_files(
+                    alert,
+                    snippet_dir=getattr(config, "snippet_dir", None),
+                    video_dir=getattr(config, "video_dir", None),
+                )
+                deleted_alerts += 1
+                deleted_snippets += int(summary.get("deleted_snippets", 0))
+                deleted_videos += int(summary.get("deleted_videos", 0))
+            write_alerts(config.alert_log, remaining_alerts)
+
+        self._send_json(
+            {
+                "ok": True,
+                "action": "delete_rejected",
+                "deleted_alerts": int(deleted_alerts),
+                "deleted_snippets": int(deleted_snippets),
+                "deleted_videos": int(deleted_videos),
+            },
+            HTTPStatus.OK,
+        )
 
     def _send_settings(self):
         """Return the current runtime settings to the browser."""
@@ -560,6 +806,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         with config.settings_lock:
             config.camera_index = int(_FIXED_PRIMARY_CAMERA_INDEX)
             config.camera_zone = _zone_for_camera_index(_FIXED_PRIMARY_CAMERA_INDEX)
+            camera_enabled = bool(config.camera_enabled)
             stream_fps = float(config.stream_fps)
             width = int(config.width)
             height = int(config.height)
@@ -589,6 +836,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
             for item in camera_manager.status_snapshot()
             if isinstance(item, dict)
         }
+        if not camera_enabled:
+            for preview_index in list(active_preview_indices):
+                camera_manager.remove_camera(preview_index)
+            return
         if _FIXED_SECONDARY_CAMERA_INDEX not in active_preview_indices:
             camera_manager.add_camera(_FIXED_SECONDARY_CAMERA_INDEX)
         for preview_index in list(active_preview_indices):
@@ -740,14 +991,41 @@ class DashboardHandler(BaseHTTPRequestHandler):
         """Clear persistent rows used by the dashboard stats table."""
         config = self.server.config
         state_path = _dashboard_state_path(config)
-        empty_state = {
-            "counts": {},
-            "processed_alert_ids": [],
-            "updated_at": datetime.now().isoformat(timespec="seconds"),
-        }
         with config.alert_lock:
+            alerts = read_alerts(config.alert_log)
+            changed = ensure_alert_metadata(alerts)
+            for alert in alerts:
+                original_zone = str(alert.get("zone", ""))
+                original_camera = str(alert.get("camera_index", ""))
+                _apply_alert_zone_mapping(alert)
+                if (
+                    original_zone != str(alert.get("zone", ""))
+                    or original_camera != str(alert.get("camera_index", ""))
+                ):
+                    changed = True
+            if changed:
+                write_alerts(config.alert_log, alerts)
+
+            # Keep currently persisted alerts from being counted again after a manual clear.
+            processed_alert_ids = [
+                str(alert.get("id", "")).strip()
+                for alert in alerts
+                if isinstance(alert, dict) and str(alert.get("id", "")).strip()
+            ]
+            empty_state = {
+                "counts": {},
+                "processed_alert_ids": processed_alert_ids,
+                "updated_at": datetime.now().isoformat(timespec="seconds"),
+            }
             _write_dashboard_state(state_path, empty_state)
-        self._send_json({"ok": True, "cleared": True}, HTTPStatus.OK)
+        self._send_json(
+            {
+                "ok": True,
+                "cleared": True,
+                "ignored_existing_alerts": len(processed_alert_ids),
+            },
+            HTTPStatus.OK,
+        )
 
     def _trigger_train_accepted(self):
         """Start training on accepted snippets if the environment supports it."""
@@ -1048,7 +1326,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         self._send_json(sorted(names), HTTPStatus.OK)
 
     def _create_manual_annotation(self):
-        """Save a user-drawn bounding box as a new alert for accept/reject training."""
+        """Save a user annotation with crop/object boxes as a new alert for training."""
         config = self.server.config
         if cv2 is None:
             self.send_error(HTTPStatus.INTERNAL_SERVER_ERROR, "OpenCV not available")
@@ -1059,22 +1337,58 @@ class DashboardHandler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.BAD_REQUEST, str(exc))
             return
         bbox = payload.get("bbox")
+        object_bbox = payload.get("object_bbox", bbox)
         class_name = str(payload.get("class_name", "")).strip().lower()
-        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
-            self.send_error(HTTPStatus.BAD_REQUEST, "bbox must be [x1, y1, x2, y2] ratios")
-            return
+        confidence_raw = payload.get("confidence", 1.0)
         if not class_name or len(class_name) > 64 or re.search(r'[/\\]', class_name):
             self.send_error(HTTPStatus.BAD_REQUEST, "Invalid class_name")
             return
-        try:
-            ratios = [float(v) for v in bbox]
-        except (TypeError, ValueError):
-            self.send_error(HTTPStatus.BAD_REQUEST, "bbox values must be numbers")
+
+        def _parse_box(raw_box, field_name: str):
+            if not isinstance(raw_box, (list, tuple)) or len(raw_box) != 4:
+                self.send_error(HTTPStatus.BAD_REQUEST, f"{field_name} must be [x1, y1, x2, y2] ratios")
+                return None
+            try:
+                ratios = [float(v) for v in raw_box]
+            except (TypeError, ValueError):
+                self.send_error(HTTPStatus.BAD_REQUEST, f"{field_name} values must be numbers")
+                return None
+            for ratio in ratios:
+                if ratio < 0.0 or ratio > 1.0:
+                    self.send_error(HTTPStatus.BAD_REQUEST, f"{field_name} ratios must be 0.0-1.0")
+                    return None
+            left = min(ratios[0], ratios[2])
+            top = min(ratios[1], ratios[3])
+            right = max(ratios[0], ratios[2])
+            bottom = max(ratios[1], ratios[3])
+            if (right - left) <= 0.001 or (bottom - top) <= 0.001:
+                self.send_error(HTTPStatus.BAD_REQUEST, f"{field_name} is too small")
+                return None
+            return [left, top, right, bottom]
+
+        crop_ratios = _parse_box(bbox, "bbox")
+        if crop_ratios is None:
             return
-        for r in ratios:
-            if r < 0.0 or r > 1.0:
-                self.send_error(HTTPStatus.BAD_REQUEST, "bbox ratios must be 0.0-1.0")
-                return
+        object_ratios = _parse_box(object_bbox, "object_bbox")
+        if object_ratios is None:
+            return
+        if not (
+            object_ratios[0] >= crop_ratios[0]
+            and object_ratios[1] >= crop_ratios[1]
+            and object_ratios[2] <= crop_ratios[2]
+            and object_ratios[3] <= crop_ratios[3]
+        ):
+            self.send_error(HTTPStatus.BAD_REQUEST, "object_bbox must be fully inside bbox")
+            return
+
+        try:
+            confidence = float(confidence_raw)
+        except (TypeError, ValueError):
+            self.send_error(HTTPStatus.BAD_REQUEST, "confidence must be a number")
+            return
+        if confidence < 0.0 or confidence > 1.0:
+            self.send_error(HTTPStatus.BAD_REQUEST, "confidence must be between 0.0 and 1.0")
+            return
 
         try:
             source = self._resolve_camera_source(payload.get("camera_index"))
@@ -1115,24 +1429,27 @@ class DashboardHandler(BaseHTTPRequestHandler):
         frame = frame.copy()
         h, w = frame.shape[:2]
 
-        x1 = ratios[0] * w
-        y1 = ratios[1] * h
-        x2 = ratios[2] * w
-        y2 = ratios[3] * h
-        left, top, right, bottom = clamp_box([x1, y1, x2, y2], w, h)
+        object_x1 = object_ratios[0] * w
+        object_y1 = object_ratios[1] * h
+        object_x2 = object_ratios[2] * w
+        object_y2 = object_ratios[3] * h
+        left, top, right, bottom = clamp_box([object_x1, object_y1, object_x2, object_y2], w, h)
 
-        # Add margin around the crop for context (20% on each side).
-        box_w = right - left
-        box_h = bottom - top
-        margin_x = int(box_w * 0.2)
-        margin_y = int(box_h * 0.2)
-        crop_left = max(0, left - margin_x)
-        crop_top = max(0, top - margin_y)
-        crop_right = min(w, right + margin_x)
-        crop_bottom = min(h, bottom + margin_y)
+        crop_x1 = crop_ratios[0] * w
+        crop_y1 = crop_ratios[1] * h
+        crop_x2 = crop_ratios[2] * w
+        crop_y2 = crop_ratios[3] * h
+        crop_left, crop_top, crop_right, crop_bottom = clamp_box([crop_x1, crop_y1, crop_x2, crop_y2], w, h)
+        if (crop_right - crop_left) <= 1 or (crop_bottom - crop_top) <= 1:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Drawn crop box is too small")
+            return
+        if left < crop_left or top < crop_top or right > crop_right or bottom > crop_bottom:
+            self.send_error(HTTPStatus.BAD_REQUEST, "Object box must be inside the crop box")
+            return
+
         crop = frame[crop_top:crop_bottom, crop_left:crop_right]
         if crop.size == 0:
-            self.send_error(HTTPStatus.BAD_REQUEST, "Drawn box is too small")
+            self.send_error(HTTPStatus.BAD_REQUEST, "Drawn crop box is too small")
             return
 
         # Draw the bounding box on the crop.
@@ -1141,7 +1458,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
         rel_right = right - crop_left
         rel_bottom = bottom - crop_top
         cv2.rectangle(crop, (rel_left, rel_top), (rel_right, rel_bottom), (0, 180, 255), 2)
-        label = class_name
+        label = f"{class_name} {confidence:.2f}"
         cv2.putText(crop, label, (rel_left, max(rel_top - 6, 12)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 180, 255), 1)
 
@@ -1163,7 +1480,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
 
         detection = {
             "class_name": class_name,
-            "confidence": 1.0,
+            "confidence": round(confidence, 4),
             "bbox_xyxy": [left, top, right, bottom],
             "snippet_file": snippet_name,
             "snippet_bbox_xywhn": [round(cx, 6), round(cy, 6), round(bw, 6), round(bh, 6)],

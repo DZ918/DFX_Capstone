@@ -234,7 +234,11 @@ def _current_hand_mouth_output(config, now_ts: float) -> tuple[bool, float, dict
     """Return the currently active strict hand-to-mouth state and score."""
     active_until = float(getattr(config, "person_proxy_active_until", 0.0))
     active = active_until > 0.0 and now_ts <= active_until
-    return active, (round(HAND_MOUTH_SCORE_FLOOR, 3) if active else 0.0), _current_hand_mouth_subject(config)
+    subject = _current_hand_mouth_subject(config)
+    if isinstance(subject, dict):
+        subject["gesture_triggered"] = False
+        subject["proxy_active"] = bool(active)
+    return active, (round(HAND_MOUTH_SCORE_FLOOR, 3) if active else 0.0), subject
 
 
 def _reset_hand_mouth_candidate(config):
@@ -930,5 +934,7 @@ def detect_person_hand_to_mouth_proxy(
         "wrist_upward_ratio": float(wrist_upward_ratio),
         "wrist_upward_steps": int(wrist_upward_steps),
         "velocity_ready": bool(velocity_ready),
+        "gesture_triggered": bool(triggered),
+        "proxy_active": bool(active),
     }
     return active, score, proxy_details

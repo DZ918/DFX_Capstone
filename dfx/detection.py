@@ -14,11 +14,21 @@ try:
 except Exception:
     np = None
 
-from dfx.constants import CAMERA_ZONES, FOOD_CLASS_NAMES
+from dfx.constants import (
+    CAMERA_ZONES,
+    FOOD_CLASS_NAMES,
+    is_ignored_yolo_class_name,
+    normalize_class_label,
+)
 
 
 def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
     """Map human-readable class names to the integer class IDs exposed by YOLO."""
+    normalized_allowed = {
+        normalize_class_label(name)
+        for name in (allowed_names or set())
+        if str(name or "").strip()
+    }
     names = getattr(model, "names", None)
     if names is None and hasattr(model, "model"):
         names = getattr(model.model, "names", None)
@@ -30,7 +40,10 @@ def get_allowed_class_ids(model, allowed_names: set[str]) -> list[int]:
         return []
     allowed: list[int] = []
     for cls_id, name in items:
-        if name and name.strip().lower() in allowed_names:
+        normalized = normalize_class_label(str(name or ""))
+        if not normalized or is_ignored_yolo_class_name(normalized):
+            continue
+        if normalized in normalized_allowed:
             allowed.append(int(cls_id))
     return sorted(allowed)
 
@@ -40,14 +53,21 @@ def detections_from_result(result, allowed_names: set[str] | None = None) -> lis
     detections: list[dict] = []
     if result.boxes is None or len(result.boxes) == 0:
         return detections
+    normalized_allowed = {
+        normalize_class_label(name)
+        for name in (allowed_names or set())
+        if str(name or "").strip()
+    }
     names = result.names
     for idx in range(len(result.boxes)):
         x1, y1, x2, y2 = (float(v) for v in result.boxes.xyxy[idx])
         conf = float(result.boxes.conf[idx])
         cls_id = int(result.boxes.cls[idx])
         class_name = names.get(cls_id, str(cls_id))
-        normalized = class_name.strip().lower()
-        if allowed_names and normalized not in allowed_names:
+        normalized = normalize_class_label(class_name)
+        if not normalized or is_ignored_yolo_class_name(normalized):
+            continue
+        if normalized_allowed and normalized not in normalized_allowed:
             continue
         detections.append(
             {
